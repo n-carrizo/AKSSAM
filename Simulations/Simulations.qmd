@@ -1,0 +1,1792 @@
+---
+title: "A-Splines Algorithm with multiple additive terms - Simulation Study"
+author: "Nicolas Carrizosa Arias"
+format: 
+  html:
+    toc: true        
+    toc-depth: 4     
+    toc-location: left  
+    self-contained: true
+---
+
+# Functions
+
+## Library
+
+```{r library, warning = FALSE, message=FALSE}
+# Required Packages
+library(caret)
+library(corpcor)
+library(corrplot)
+library(dplyr)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(gridGraphics)
+library(MASS)
+library(Matrix)
+library(patchwork)
+library(pROC)
+library(pracma)
+library(splines)
+library(splines2)
+library(tidyverse)
+library(aspline)
+library(xtable)
+
+# Our functions
+source("../Functions.R")
+```
+
+## Data Simulations
+
+### Gaussian Additive Model
+
+```{r Simulated Data 1}
+simulate.data1 = function(n, SNR){
+  
+  # This case study has m = 6 covariates
+  m = 6
+  
+  n <- n                  # Nº instances
+  X = matrix(1, n, m)     # Initialize the instance mat.
+  FF = matrix(1, n, m)    # Initialize the func. values mat.
+  y = matrix(0, n, 1)     # Initialize the obj values vect. + constant term.
+  
+  for (i in 1:m){
+    if (i %% m == 1){
+      x <- runif(n, 0, 1)
+      X[,i] = x
+      
+      f = cos(2*pi*(2*x - 2.5))
+      FF[,i] = f - mean(f)
+      y = y + FF[,i]
+    } else if (i %% m == 2){
+      x <- runif(n, 0, 1)
+      X[,i] = x
+      
+      f = 3*exp(-70*(x-0.3)^2) +  3*exp(-10*(x-0.7)^2) + x/10
+      FF[,i] = f - mean(f)
+      y = y + FF[,i]
+    } else if (i %% m == 3){
+      x <- runif(n, 0, 1)
+      X[,i] = x
+      
+      f = (x^3 - 2*sin(pi*x^3))
+      FF[,i] = f - mean(f)
+      y = y + FF[,i]
+    } else if (i %% m == 4){
+      x <- runif(n, 0, 1)
+      X[,i] = x
+      
+      f = 1/3*(x + 10*exp(-20*(x-0.5)^2))
+      FF[,i] = f - mean(f)
+      y = y + FF[,i]
+    } else if (i %% m == 5){
+      x <- runif(n, 0, 1)
+      X[,i] = x
+      
+      f = (cos(6*(2*x - 3)) - 2.5 * (x-1))
+      FF[,i] = f - mean(f)
+      y = y + FF[,i]
+    } else{
+      x <- runif(n, 0, 1)
+      X[,i] = x
+      
+      f =  5 * sqrt(x * (1 - x)) * sin((2 * pi * (1 + 2^(-3/5))) / (x + 2^(-3/5))) 
+      FF[,i] = f - mean(f)
+      y = y + FF[,i]
+    }
+  }
+  
+  # Variance of the error is given by SNR 
+  signal_var = sum(apply(FF, 2, var))
+  sigma <- sqrt(signal_var/SNR)
+  
+  # Response
+  y = y + rnorm(n, 0, sigma)
+  
+  # Output
+  list(X = X,
+       y = y,
+       FF = FF)
+}
+```
+
+### Poisson Additive Model
+
+```{r Poisson Simulated Data 1}
+simulate.data.pois1 = function(n){
+  
+  # This case study has m = 3 covariates
+  m = 3
+  
+  n <- n                  # Nº instances
+  X = matrix(1, n, m)     # Initialize the instance mat.
+  FF = matrix(1, n, m)    # Initialize the func. values mat.
+  f_total = rep(0, n)     # Linear estimator
+  
+  for (i in 1:m) {
+    x <- runif(n, 0, 1)
+    X[, i] <- x
+    
+    if (i %% m == 1) {
+      f <- 1/2 * sin(4*pi*x)*log(20*x + 1)
+    } else if (i %% m == 2) {
+      f <- (x^3 + sin(2*pi*(x^7 - 2*x^3)))
+    } else {
+      f <- 1/2 * (sin(6*pi*x) + 3*x - 5* x^2 + cos(3*pi*x))
+    }
+    f_centered <- (f - mean(f))
+    FF[, i] <- f_centered
+    f_total <- f_total + f_centered
+  }
+  
+  eta <- f_total            # Linear estimator
+  lambda = exp(eta)         # Mean
+  y = rpois(n, lambda)      # Response
+
+  # Output
+  list(X = X,
+       y = y,
+       FF = FF,
+       eta = eta)
+}
+```
+
+# Simulation Study
+
+The methodology we will be using is the following:
+
+For $N = 50$ repetitions, we will simulate $n = 300, 500, 800$ observations, split them into train/test subsets with $80\%$ and $20\%$ observations respectively. We will then employ our algorithm and a P-spline algorithm for optimal AIC CV penalization and measure their associated errors, both trained in the training subsample and tested in the test subsample. Then, we will average their values over a grid of points in their support and average their error metrics for comparison, as well as their $df$ as a complexity measure.
+
+
+This procedure will be employed for each situation and for every $SNR = 1,2,4$.
+
+## Gaussian Simulation 
+
+### Covariates
+
+```{r Gaussian Covariates}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+# Simulate data
+n = 500
+SNR = 6
+ll = simulate.data1(n, SNR)
+X = ll$X
+FF = ll$FF
+
+# Format the dataframe
+df_long <- map2_dfr(
+  as.data.frame(X), as.data.frame(FF),
+  ~ tibble(X = .x, FF = .y),
+  .id = "Covariate"
+)
+
+df_long <- df_long %>%
+  mutate(Covariate = factor(Covariate, labels = paste("Covariate", 1:6)))
+
+# Covariates' plot
+ggplot(df_long, aes(x = X, y = FF)) +
+  geom_line(color = "grey20", linewidth = 2) +
+  facet_wrap(~ Covariate, scales = "free_y") +
+  theme_light(base_size = 14) +
+  labs(x = NULL, y = "Value") +
+  theme(
+    strip.text = element_text(face = "bold", size = 12, color = "grey20"),
+    strip.background = element_rect(fill = "white", color = "grey80"),
+    panel.grid = element_line(color = "grey95")
+  )
+```
+
+
+### Pipeline
+
+```{r simulation_1}
+## Function which performs a single simulation for the first study
+simulation_1 <- function(n, SNR, m, family, ndx, bdeg, lambda.init,
+                         maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
+                         grid){
+  
+  ## Simulate the data
+  ll = simulate.data1(n, SNR)  # List of simulated data
+  X = ll$X                      # Covariate matrix
+  y = ll$y                      # Response vector
+  
+
+  ## Our algorithm 
+  # Train
+  model1 <- GAM.asplines3.wood2(X, y, family, lambda.init, ndx, bdeg, 
+                               maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, 
+                               epsilon)
+  
+  # List with selected knots and parameter vector
+  K_sel <- model1$K_sel
+  alpha <- as.vector(model1$alpha.new)
+  
+  # Test
+  # List with new design matrices
+  Design_list = vector("list", m + 1)
+  Design_list[[1]] = matrix(1, n, 1) # Intercept
+  for (t in 1:m){                    # Covariates
+    Design_list[[t+1]] = my.bbase4(X[,t], K_sel[[t]], bdeg[t])
+  }
+  B_star <- do.call(cbind, Design_list) # Collapsed
+  
+  predictions1 <- B_star %*% alpha
+  
+  # Grid
+  # List with evaluations in the grid
+  Grid_list = vector("list", m)
+  # Vector of covariates' basis sizes
+  grid_basis_length = rep(0,m)
+  
+  for (t in 1:m){                 # Covariates
+    Grid_list[[t]] = my.bbase4(grid[,t], K_sel[[t]], bdeg[t])
+    grid_basis_length[t] = dim(Grid_list[[t]])[2]
+  }
+  
+  grid1 <- grid # Initialize matrix to store grid values of each covariate
+  
+  for (t in 1:m){
+    B = Grid_list[[t]] # Obtain the design matrix
+    
+    # Calculate the indexes of coeffs.
+    if (t == 1){
+      index_0 = 2
+      index_1 = 1 + grid_basis_length[1]
+    }else{
+      index_0 = 2 + sum(grid_basis_length[1:(t-1)])
+      index_1 = index_0 + grid_basis_length[t] - 1
+    }
+    
+    # Covariate values in the grid
+    grid1[ ,t] <- B %*% alpha[index_0:index_1]
+  }
+  
+  ## P-splines algorithm
+  data <- data.frame(y = y, as.data.frame(X))
+  terms <- paste0("s(V", 1:m, ", bs = 'ps', k = ", ndx + bdeg, ")")
+  formula <- as.formula(paste("y ~", paste(terms, collapse = " + ")))
+  # Train
+  model2 <- mgcv::gam(formula, data = data, method = "REML")
+  
+  # Test
+  test = as.data.frame(X)
+  predictions2 <- as.vector(predict(model2, newdata = test))
+    
+  # Grid
+  grid2 <- predict(model2, newdata = as.data.frame(grid), type = "terms")
+  
+  
+  ## Error metrics
+  MSE1 <- mean((y - predictions1)^2)
+  MSE2 <- mean((y - predictions2)^2)
+  MAE1 <- mean(abs(y - predictions1))
+  MAE2 <- mean(abs(y - predictions2))
+  
+  ## Fit metrics
+  EDF1 <- ncol(B_star)    # Unpenalized B-spline regression
+  EDF2 <- sum(model2$edf) # Given via gam()
+  
+  ## Compute the AIC for the A-Splines model (Standard B-Spline regression)
+  # Wood's
+  sigma2_hat <- mean((y - predictions1)^2)
+  loglik <- -0.5 * n * log(2 * pi * sigma2_hat) - 0.5 * sum((y - predictions1)^2) / sigma2_hat
+   
+  AIC1 <- -2 * loglik + 2 * EDF1
+  BIC1 <- -2 * loglik + log(n) * EDF1
+  # P-Splines: Method = REML in P-Splines makes BIC() inadequate: Compute it manually
+  sigma2_hat2 <- mean((y - predictions2)^2) 
+  logLik_val <- sum(dnorm(y, mean = predictions2, sd = sqrt(sigma2_hat2), log = TRUE))
+  AIC2 <- -2 * logLik_val + 2 * EDF2
+  BIC2 <-  -2 * logLik_val + log(n) * EDF2
+  
+## Assignment
+return(list(MSE_Wood = MSE1,    # Wood's algorithm results
+            MAE_Wood = MAE1,
+            Grid_Wood = grid1,
+            K_sel_Wood = K_sel,
+            EDF_Wood = EDF1,
+            Size_Wood = EDF1,
+            AIC_Wood = AIC1,
+            BIC_Wood = BIC1,
+            MSE_Psp = MSE2,     # P-splines results
+            MAE_Psp = MAE2,
+            Grid_Psp = grid2,
+            EDF_Psp = EDF2,
+            AIC_Psp = AIC2,
+            BIC_Psp = BIC2,
+            Size_Psp = length(model2$coefficients)
+))
+}
+```
+
+```{r covariates_plot_1}
+covariates_plot_1 <- function(Results, grid, N, m, n, SNR){
+  
+  ## True covariates's effects and X
+  ll = simulate.data1(n, SNR)
+  X = ll$X
+  FF = ll$FF
+  
+  ## Calculate the mean estimated covariates' effects over the simulations
+  # Wood's algorithm
+  Grid_Wood_matrices <- lapply(Results, function(x) x$Grid_Wood)
+  mean_Grid_Wood <- Reduce("+", Grid_Wood_matrices) / N
+  # P-Splines
+  Grid_Psp_matrices <- lapply(Results, function(x) x$Grid_Psp)
+  mean_Grid_Psp <- Reduce("+", Grid_Psp_matrices) / N
+  
+  
+  ## Marginalized covariates' effects
+  # Retrieve the Selected Knots List for each simulation
+  Knots_Selected <- lapply(Results, function(x) x$K_sel_Wood) 
+  
+  # Initialize list of plots
+  plot_list <- vector('list', m)
+  
+  plot_list <- lapply(1:m, function(t) {
+    
+    knots_t <- unlist(lapply(1:N, function(i) Knots_Selected[[i]][[t]]))
+    rug_df <- data.frame(x = knots_t)
+    
+    o <- order(X[, t])
+    plot <- ggplot() +
+      # True effect
+      geom_line(aes(x = X[o, t], y = FF[o, t], color = "True effect"), alpha = 0.6, linewidth = 3) +
+      # Mean P-Splines estimations
+      geom_line(aes(x = grid[, t], y = mean_Grid_Psp[, t], color = "P-Splines"), linewidth = 1.1, alpha = 0.8) +
+      # Mean Wood + A-Splines estimations
+      geom_line(aes(x = grid[, t], y = mean_Grid_Wood[, t], color = "AKSSAM"), linewidth = 1.1, alpha = 0.8) +
+      # 'Density' of selected knots
+      geom_rug(data = rug_df, aes(x = x), sides = "b", color = "black", alpha = 2/N, linewidth = 2, length = unit(0.05, "npc")) +
+      # Define manual color legend
+      scale_color_manual(
+        name = "Curves",
+        values = c("True effect" = "grey50", 
+                   "P-Splines" = "#1C86EE", 
+                   "AKSSAM" = "#FF3030")
+      ) +
+      scale_y_continuous(expand = expansion(mult = c(0.1, 0.1))) +
+      labs(title = paste0('Covariate ', t)) +
+      theme_light() + 
+      theme(
+        legend.position = "bottom",
+        axis.title = element_blank(),
+        panel.grid.minor = element_blank()
+      )
+
+      return(plot)
+  })
+  
+  
+  ## Combine the plots
+  combined <- wrap_plots(plot_list, nrow = 2, guides = "collect") +
+  plot_annotation(
+    title = paste0("Gaussian Simulation, n = ", n, ", SNR = ", SNR),
+    theme = theme(
+      plot.title = element_text(size = 15, face = "bold"),
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.background = element_rect(fill = alpha("white", 0.7), color = NA)
+    )
+  )
+  
+  ## Output
+  return(combined)
+}
+```
+
+
+```{r error_plot_1}
+error_plot_1 <- function(Results){
+  
+  ## MSE and MAE across algorithms and simulations
+  MSE_Wood <- sapply(Results, function(x) x$MSE_Wood)
+  MAE_Wood <- sapply(Results, function(x) x$MAE_Wood)
+  EDF_Wood <- sapply(Results, function(x) x$EDF_Wood)
+  Size_Wood <- sapply(Results, function(x) x$Size_Wood)
+  
+  MSE_PSp  <- sapply(Results, function(x) x$MSE_Psp)
+  MAE_PSp  <- sapply(Results, function(x) x$MAE_Psp)
+  EDF_Psp <- sapply(Results, function(x) x$EDF_Psp)
+  Size_Psp <- sapply(Results, function(x) x$Size_Psp)
+  
+  df <- data.frame(
+    Value = c(MSE_Wood, MSE_PSp, MAE_Wood, MAE_PSp, EDF_Wood, EDF_Psp, Size_Wood, Size_Psp),
+    Metric = rep(c("MSE", "MSE", "MAE", "MAE", "EDF", "EDF", "Basis Size", "Basis Size"), each = length(Results)),
+    Method = rep(c(rep("AKSSAM", length(Results)), rep("P-Splines", length(Results))), times = 4)
+  )
+  df$Metric <- factor(df$Metric, levels = c("MSE", "MAE", "EDF", "Basis Size"))
+  
+  ## Boxplot of the error metrics
+  Performance_plot <- ggplot(df, aes(x = Method, y = Value, color = Method)) +
+    geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
+    labs(title = "Performance Metrics",
+         x = "Metric", y = "Value") +
+    scale_color_manual(
+      values = c("AKSSAM" = "#FF3030", "P-Splines" = "#1C86EE"),
+      labels = c("AKSSAM", "P-Splines"),
+      name = "Algorithm"
+    ) +
+    facet_wrap(~ Metric, scales = "free_y") + 
+    theme_light(base_size = 14) +
+    theme(
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.title = element_text(size = 12),
+      legend.text = element_text(size = 10)
+    )
+  
+  ## Output
+  return(Performance_plot)
+}
+```
+
+
+```{r simulation_wrapper_1}
+simulation_wrapper_1 <- function(N, n, SNR, m, family, ndx, bdeg, lambda.init,
+                                 maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                 epsilon){
+
+  # Set seed for reproducibility
+  set.seed(12345)
+  
+  # List which contains a list for every repetition storing the 
+  # repetition's MSE, MAE and values over a grid of values of x 
+  Results = rep(list(list(MSE_Wood = NA, MAE_Wood = NA, Grid_Wood = NA, 
+                          K_sel_Wood = vector('list', m), EDF_Wood = NA,
+                          AIC_Wood = NA, BIC_Wood = NA, Size_Wood = NA,
+                          MSE_Psp = NA, MAE_Psp = NA,  Grid_Psp = NA, 
+                          EDF_Psp = NA, AIC_Psp = NA, BIC_Psp = NA, 
+                          Size_Psp = NA)), N)
+  
+  ## Create evaluation grid
+  grid <- sapply(1:m, function(j) seq(0, 1, length.out = 100))
+
+  ## Loop which performs N iterations of the simulation
+  i <- 1
+  try_tolerance <- 3 # Tolerance for retries before aborting (2 tries)
+  try_attempts <- 0  # Nº of attempts
+  total_fails <- 0   # Total Nº of fails
+  while (i <= N) {
+    
+    # Simulate once the situation with error handling
+    try_result <- try({
+      result <- simulation_1(n, SNR, m, family, ndx, bdeg, lambda.init,
+                             maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
+                             grid)
+      
+      # If the function worked properly, store the result, increase i
+      # and restart try_attempts
+      Results[[i]] <- result
+      print(paste('Simulataion ', i, 'done.'))
+      i <- i + 1
+      try_attempts <- 0
+    }, silent = FALSE)
+    
+    # Error handling
+    if (inherits(try_result, "try-error")) {
+      # Increase try_attempts
+      try_attempts <- try_attempts + 1
+      total_fails <- total_fails + 1
+      print(paste('try_attempt:', try_attempts))
+    }
+    
+    # Check if the attempt tolerance is met
+    if (try_attempts == try_tolerance){
+      warning('Simulation error: Attempt tolerance met \n')
+      break
+    }
+  }
+  
+  ## Print the total nº of fails
+  print(paste('The total failed attemps were:', total_fails))
+  
+  ## Covariates' estimated effect plot 
+  covariates_plot <- covariates_plot_1(Results, grid, N, m, n, SNR)
+  
+  ## Error metrics plot and values
+  err_plot <- error_plot_1(Results)
+  err_metrics = list(mean_MSE_Wood = NA, sd_MSE_Wood = NA, 
+                     mean_MAE_Wood = NA, sd_MAE_Wood = NA, 
+                     mean_AIC_Wood = NA, sd_AIC_Wood = NA, 
+                     mean_BIC_Wood = NA, sd_BIC_Wood = NA,
+                     mean_EDF_Wood = NA, sd_EDF_Wood = NA,
+                     mean_Size_Wood = NA, sd_Size_Wood = NA,
+                     mean_MSE_Psp = NA, sd_MSE_Psp = NA, 
+                     mean_MAE_Psp = NA, sd_MAE_Psp = NA, 
+                     mean_AIC_Psp = NA, sd_AIC_Psp = NA, 
+                     mean_BIC_Psp = NA, sd_BIC_Psp = NA,
+                     mean_EDF_Psp = NA, sd_EDF_Psp = NA,
+                     mean_Size_Psp = NA, sd_Size_Psp = NA)
+  
+  # Calculate the mean error terms across iterations
+  # MSE_Wood
+  err_metrics$mean_MSE_Wood <- mean(sapply(Results, function(x) x$MSE_Wood), na.rm = TRUE)
+  err_metrics$sd_MSE_Wood <- sd(sapply(Results, function(x) x$MSE_Wood), na.rm = TRUE)
+  # MAE_Wood
+  err_metrics$mean_MAE_Wood <- mean(sapply(Results, function(x) x$MAE_Wood), na.rm = TRUE)
+  err_metrics$sd_MAE_Wood <- sd(sapply(Results, function(x) x$MAE_Wood), na.rm = TRUE)
+  # AIC_Wood
+  err_metrics$mean_AIC_Wood <- mean(sapply(Results, function(x) x$AIC_Wood), na.rm = TRUE)
+  err_metrics$sd_AIC_Wood <- sd(sapply(Results, function(x) x$AIC_Wood), na.rm = TRUE)
+  # BIC_Wood
+  err_metrics$mean_BIC_Wood <- mean(sapply(Results, function(x) x$BIC_Wood), na.rm = TRUE)
+  err_metrics$sd_BIC_Wood <- sd(sapply(Results, function(x) x$BIC_Wood), na.rm = TRUE)
+  # EDF_Wood
+  err_metrics$mean_EDF_Wood <- mean(sapply(Results, function(x) x$EDF_Wood), na.rm = TRUE)
+  err_metrics$sd_EDF_Wood <- sd(sapply(Results, function(x) x$EDF_Wood), na.rm = TRUE)
+  # Size_Wood
+  err_metrics$mean_Size_Wood <- mean(sapply(Results, function(x) x$Size_Wood), na.rm = TRUE)
+  err_metrics$sd_Size_Wood <- sd(sapply(Results, function(x) x$Size_Wood), na.rm = TRUE)
+  # MSE_Psp
+  err_metrics$mean_MSE_Psp <- mean(sapply(Results, function(x) x$MSE_Psp), na.rm = TRUE)
+  err_metrics$sd_MSE_Psp <- sd(sapply(Results, function(x) x$MSE_Psp), na.rm = TRUE)
+  # MAE_Psp
+  err_metrics$mean_MAE_Psp <- mean(sapply(Results, function(x) x$MAE_Psp), na.rm = TRUE)
+  err_metrics$sd_MAE_Psp <- sd(sapply(Results, function(x) x$MAE_Psp), na.rm = TRUE)
+  # AIC_Psp
+  err_metrics$mean_AIC_Psp <- mean(sapply(Results, function(x) x$AIC_Psp), na.rm = TRUE)
+  err_metrics$sd_AIC_Psp <- sd(sapply(Results, function(x) x$AIC_Psp), na.rm = TRUE)
+  # BIC_Psp
+  err_metrics$mean_BIC_Psp <- mean(sapply(Results, function(x) x$BIC_Psp), na.rm = TRUE)
+  err_metrics$sd_BIC_Psp <- sd(sapply(Results, function(x) x$BIC_Psp), na.rm = TRUE)
+  # EDF_Psp
+  err_metrics$mean_EDF_Psp <- mean(sapply(Results, function(x) x$EDF_Psp), na.rm = TRUE)
+  err_metrics$sd_EDF_Psp <- sd(sapply(Results, function(x) x$EDF_Psp), na.rm = TRUE)
+  # Size_Psp
+  err_metrics$mean_Size_Psp <- mean(sapply(Results, function(x) x$Size_Psp), na.rm = TRUE)
+  err_metrics$sd_Size_Psp <- sd(sapply(Results, function(x) x$Size_Psp), na.rm = TRUE)
+
+  ## Output
+  return(list(Results = Results,                 # List with results for each simulation
+              covariates_plot = covariates_plot, # Covariates' estimated effect plot 
+              err_plot = err_plot,               # Error metrics plot
+              err_metrics = err_metrics          # Error metrics
+              ))
+}
+```
+
+
+### n = 300
+
+#### SNR = 1
+
+```{r Gaussian n 300 SNR 1}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+## Simulation Parameters
+N = 50   # Nº of simulation repetitions
+n = 300  # Nº of observations
+SNR = 1 # Signal-to-noise ratio
+m = 6    # Nº of covariates
+
+## Convergence and tolerance conditions
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "gaussian"              # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(10, m)         # Initialized penalization
+
+## Perform the simulations
+ll_Gaussian_n1S1 <- simulation_wrapper_1(N, n, SNR, m, family, ndx, bdeg, lambda.init,
+                                         maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                         epsilon)
+
+## Plots and results
+ll_Gaussian_n1S1$covariates_plot
+ll_Gaussian_n1S1$err_plot
+
+(ll_Gaussian_n1S1$covariates_plot | ll_Gaussian_n1S1$err_plot) + 
+  plot_layout(widths = c(2, 1)) +
+  plot_annotation(
+    title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+ll_Gaussian_n1S1$err_metrics
+```
+
+#### SNR = 2
+
+```{r Gaussian n 300 SNR 2}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+## Simulation Parameters
+N = 50   # Nº of simulation repetitions
+n = 300  # Nº of observations
+SNR = 2 # Signal-to-noise ratio
+m = 6    # Nº of covariates
+
+## Convergence and tolerance conditions
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "gaussian"              # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(10, m)         # Initialized penalization
+
+## Perform the simulations
+ll_Gaussian_n1S2 <- simulation_wrapper_1(N, n, SNR, m, family, ndx, bdeg, lambda.init,
+                                         maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                         epsilon)
+
+## Plots and results
+ll_Gaussian_n1S2$covariates_plot
+ll_Gaussian_n1S2$err_plot
+
+(ll_Gaussian_n1S2$covariates_plot | ll_Gaussian_n1S2$err_plot) + 
+  plot_layout(widths = c(2, 1)) +
+  plot_annotation(
+    title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+ll_Gaussian_n1S2$err_metrics
+```
+
+#### SNR = 4
+
+```{r Gaussian n 300 SNR 4}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+## Simulation Parameters
+N = 50   # Nº of simulation repetitions
+n = 300  # Nº of observations
+SNR = 4 # Signal-to-noise ratio
+m = 6    # Nº of covariates
+
+## Convergence and tolerance conditions
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "gaussian"              # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(10, m)         # Initialized penalization
+
+## Perform the simulations
+ll_Gaussian_n1S3 <- simulation_wrapper_1(N, n, SNR, m, family, ndx, bdeg, lambda.init,
+                                         maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                         epsilon)
+
+## Plots and results
+ll_Gaussian_n1S3$covariates_plot
+ll_Gaussian_n1S3$err_plot
+
+(ll_Gaussian_n1S3$covariates_plot | ll_Gaussian_n1S3$err_plot) + 
+  plot_layout(widths = c(2, 1)) +
+  plot_annotation(
+    title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+ll_Gaussian_n1S3$err_metrics
+```
+
+### n = 500
+
+#### SNR = 1
+
+```{r Gaussian n 500 SNR 1}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+## Simulation Parameters
+N = 50   # Nº of simulation repetitions
+n = 500  # Nº of observations
+SNR = 1 # Signal-to-noise ratio
+m = 6    # Nº of covariates
+
+## Convergence and tolerance conditions
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "gaussian"              # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(10, m)         # Initialized penalization
+
+## Perform the simulations
+ll_Gaussian_n2S1 <- simulation_wrapper_1(N, n, SNR, m, family, ndx, bdeg, lambda.init,
+                                         maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                         epsilon)
+
+## Plots and results
+ll_Gaussian_n2S1$covariates_plot
+ll_Gaussian_n2S1$err_plot
+
+(ll_Gaussian_n2S1$covariates_plot | ll_Gaussian_n2S1$err_plot) + 
+  plot_layout(widths = c(2, 1)) +
+  plot_annotation(
+    title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+ll_Gaussian_n2S1$err_metrics
+```
+
+#### SNR = 2
+
+```{r Gaussian n 500 SNR 2}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+## Simulation Parameters
+N = 50   # Nº of simulation repetitions
+n = 500  # Nº of observations
+SNR = 2 # Signal-to-noise ratio
+m = 6    # Nº of covariates
+
+## Convergence and tolerance conditions
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "gaussian"              # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(10, m)         # Initialized penalization
+
+## Perform the simulations
+ll_Gaussian_n2S2 <- simulation_wrapper_1(N, n, SNR, m, family, ndx, bdeg, lambda.init,
+                                         maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                         epsilon)
+
+## Plots and results
+ll_Gaussian_n2S2$covariates_plot
+ll_Gaussian_n2S2$err_plot
+
+(ll_Gaussian_n2S2$covariates_plot | ll_Gaussian_n2S2$err_plot) + 
+  plot_layout(widths = c(2, 1)) +
+  plot_annotation(
+    title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+ll_Gaussian_n2S2$err_metrics
+```
+
+#### SNR = 4
+
+```{r Gaussian n 500 SNR 4}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+## Simulation Parameters
+N = 50   # Nº of simulation repetitions
+n = 500  # Nº of observations
+SNR = 4 # Signal-to-noise ratio
+m = 6    # Nº of covariates
+
+## Convergence and tolerance conditions
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "gaussian"              # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(10, m)         # Initialized penalization
+
+## Perform the simulations
+ll_Gaussian_n2S3 <- simulation_wrapper_1(N, n, SNR, m, family, ndx, bdeg, lambda.init,
+                                         maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                         epsilon)
+
+## Plots and results
+ll_Gaussian_n2S3$covariates_plot
+ll_Gaussian_n2S3$err_plot
+
+(ll_Gaussian_n2S3$covariates_plot | ll_Gaussian_n2S3$err_plot) + 
+  plot_layout(widths = c(2, 1)) +
+  plot_annotation(
+    title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+ll_Gaussian_n2S3$err_metrics
+```
+
+
+### n = 800
+
+#### SNR = 1
+
+```{r Gaussian n 800 SNR 1}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+## Simulation Parameters
+N = 50   # Nº of simulation repetitions
+n = 800  # Nº of observations
+SNR = 1 # Signal-to-noise ratio
+m = 6    # Nº of covariates
+
+## Convergence and tolerance conditions
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "gaussian"              # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(10, m)         # Initialized penalization
+
+## Perform the simulations
+ll_Gaussian_n3S1 <- simulation_wrapper_1(N, n, SNR, m, family, ndx, bdeg, lambda.init,
+                                         maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                         epsilon)
+
+## Plots and results
+ll_Gaussian_n3S1$covariates_plot
+ll_Gaussian_n3S1$err_plot
+
+(ll_Gaussian_n3S1$covariates_plot | ll_Gaussian_n3S1$err_plot) + 
+  plot_layout(widths = c(2, 1)) +
+  plot_annotation(
+    title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+ll_Gaussian_n3S1$err_metrics
+```
+
+#### SNR = 2
+
+```{r Gaussian n 800 SNR 2}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+## Simulation Parameters
+N = 50   # Nº of simulation repetitions
+n = 800  # Nº of observations
+SNR = 2 # Signal-to-noise ratio
+m = 6    # Nº of covariates
+
+## Convergence and tolerance conditions
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "gaussian"              # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(10, m)         # Initialized penalization
+
+## Perform the simulations
+ll_Gaussian_n3S2 <- simulation_wrapper_1(N, n, SNR, m, family, ndx, bdeg, lambda.init,
+                                         maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                         epsilon)
+
+## Plots and results
+ll_Gaussian_n3S2$covariates_plot
+ll_Gaussian_n3S2$err_plot
+
+(ll_Gaussian_n3S2$covariates_plot | ll_Gaussian_n3S2$err_plot) + 
+  plot_layout(widths = c(2, 1)) +
+  plot_annotation(
+    title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+ll_Gaussian_n3S2$err_metrics
+```
+
+#### SNR = 4
+
+```{r Gaussian n 800 SNR 4}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+## Simulation Parameters
+N = 50   # Nº of simulation repetitions
+n = 800  # Nº of observations
+SNR = 4 # Signal-to-noise ratio
+m = 6    # Nº of covariates
+
+## Convergence and tolerance conditions
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "gaussian"              # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(10, m)         # Initialized penalization
+
+## Perform the simulations
+ll_Gaussian_n3S3 <- simulation_wrapper_1(N, n, SNR, m, family, ndx, bdeg, lambda.init,
+                                         maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                         epsilon)
+
+## Plots and results
+ll_Gaussian_n3S3$covariates_plot
+ll_Gaussian_n3S3$err_plot
+
+(ll_Gaussian_n3S3$covariates_plot | ll_Gaussian_n3S3$err_plot) + 
+  plot_layout(widths = c(2, 1)) +
+  plot_annotation(
+    title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+ll_Gaussian_n3S3$err_metrics
+```
+
+### Summary Table
+
+#### Full Table
+```{r Gaussian Summary Table}
+# Initialize the table
+gaussian_table = data.frame(
+  n = c(rep(300, 3), rep(500, 3), rep(800, 3)), 
+  SNR = rep(c(1,2,4), 3)
+)
+
+# Define indexes for n and SNR
+n_vals <- c(300, 500, 800)
+SNR_vals <- c(1, 2, 4)
+
+# Iterate through all possible n and SNR combinations
+row_index <- 1
+for (i in 1:3) {
+  for (j in 1:3) {
+    # Construct object name
+    obj_name <- paste0("ll_Gaussian_n", i, "S", j)
+    
+    # Fill the appropriate row
+    gaussian_table[row_index, names(ll_Gaussian_n3S3$err_metrics)] <- get(obj_name)$err_metrics
+    
+    # Update the row index
+    row_index <- row_index + 1
+  }
+}
+
+
+# Format the table such that the error terms are included as mean (sd)
+gaussian_table2 <- gaussian_table
+
+# Obtain all mean columns and iterate along them
+mean_cols <- grep("^mean_", names(gaussian_table), value = TRUE)
+for (mean_col in mean_cols) {
+  # Get the corresponding sd column
+  sd_col <- sub("^mean_", "sd_", mean_col)
+  # Format the column
+  formatted_col <- sprintf("%.3f (%.3f)", gaussian_table[[mean_col]], gaussian_table[[sd_col]])
+  gaussian_table2[[mean_col]] <- formatted_col
+}
+# Erase sd columns
+gaussian_table2 <- gaussian_table2[ , !grepl("^sd_", names(gaussian_table2))]
+
+names(gaussian_table2) = c('n', 'SNR', 
+                           'MSE AKSSAM', 'MAE AKSSAM', 'AIC AKSSAM', 'BIC AKSSAM', 'EDF AKSSAM', 'Size AKSSAM',
+                           "MSE P-Splines", "MAE P-Splines", "AIC P-Splines", "BIC P-Splines", "EDF P-Splines", "Size P-Splines")
+
+
+# Display the Table
+knitr::kable(gaussian_table2, format = "html", caption = "Mean Results for the Gaussian Scenario")
+
+
+# LaTex code
+xtable::xtable(gaussian_table2)
+```
+
+#### Reduced table
+
+```{r}
+reduced_gaussian_table2 <- gaussian_table2[, c(1,2,3,4,6,7,9,10,12,13,14)]
+
+names(reduced_gaussian_table2) = c('n', 'SNR', 
+                           'MSE AKSSAM', 'MAE AKSSAM', 'BIC AKSSAM', 'EDF & Size AKSSAM',
+                           "MSE P-Splines", "MAE P-Splines", "BIC P-Splines", "EDF P-Splines", "Size P-Splines")
+
+# Display the Table
+knitr::kable(reduced_gaussian_table2, format = "html", caption = "Mean Results for the Gaussian Scenario")
+
+
+# LaTex code
+xtable::xtable(reduced_gaussian_table2)
+```
+
+### Save the RData
+
+```{r}
+# Checkpoint
+save.image(file = "simulations.RData")
+```
+
+### Export the images
+
+```{r}
+# Define indexes for n and SNR
+n_vals <- c(300, 500, 800)
+SNR_vals <- c(1, 2, 4)
+
+# Iterate through all possible n and SNR combinations
+for (i in 1:3) {
+  for (j in 1:3) {
+    # Construct object name
+    obj_name <- paste0("ll_Gaussian_n", i, "S", j)
+    
+    # Access the object by name
+    obj <- get(obj_name)
+    
+    # Save the Covariates' plot
+    path <- paste0("Images/TFM/", obj_name, "_Covs.png")
+    png(path, width = 1000, height = 500)
+    print(obj$covariates_plot)
+    dev.off()
+    
+    # Save the Error plot
+    path <- paste0("Images/TFM/", obj_name, "_Errs.png")
+    png(path, width = 500, height = 500)
+    print(obj$err_plot)
+    dev.off()
+  }
+}
+```
+
+
+## Poisson Simulation
+
+Notice that, for the errors MSE and MAE, we will be comparing the true linear estimator $\eta_{true}$ with $\eta^{(N)}$, the one given by our and P-Splines method.
+
+### Covariates
+
+```{r Poisson Covariates}
+#| fig-width: 10
+#| fig-height: 3
+#| fig-align: center
+#| out-width: "100%"
+
+# Simulate data
+n = 500
+ll = simulate.data.pois1(n)
+X = ll$X
+y = ll$y
+FF = ll$FF
+
+# Format the dataframe
+df_long <- map2_dfr(
+  as.data.frame(X), as.data.frame(FF),
+  ~ tibble(X = .x, FF = .y),
+  .id = "Covariate"
+)
+
+df_long <- df_long %>%
+  mutate(Covariate = factor(Covariate, labels = paste("Covariate", 1:3)))
+
+# Covariates' plot
+ggplot(df_long, aes(x = X, y = FF)) +
+  geom_line(color = "grey20", linewidth = 2) +
+  facet_wrap(~ Covariate, scales = "free_y") +
+  theme_light(base_size = 14) +
+  labs(x = NULL, y = "Value") +
+  theme(
+    strip.text = element_text(face = "bold", size = 12, color = "grey20"),
+    strip.background = element_rect(fill = "white", color = "grey80"),
+    panel.grid = element_line(color = "grey95")
+  )
+```
+
+### Pipeline
+
+```{r simulation_2}
+## Function which performs a single simulation for the second study
+simulation_2 <- function(n, m, family, ndx, bdeg, lambda.init,
+                         maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
+                         grid){
+  
+  ## Simulate the data
+  ll = simulate.data.pois1(n)   # List of simulated data
+  X = ll$X                      # Covariate matrix
+  y = ll$y                      # Response vector
+  eta_true = ll$eta             # True linear estimator
+  
+  ## Our algorithm 
+  # Train
+  model1 <- GAM.asplines3.wood2(X, y, family, lambda.init, ndx, bdeg, 
+                                maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, 
+                                epsilon)
+  
+  # List with selected knots and paramemter vector
+  K_sel <- model1$K_sel
+  alpha <- as.vector(model1$alpha.new)
+  
+  # Test
+  # List with new design matrices
+  Design_list = vector("list", m + 1)
+  Design_list[[1]] = matrix(1, n, 1) # Intercept
+  for (t in 1:m){                    # Covariates
+    Design_list[[t+1]] = my.bbase4(X[,t], K_sel[[t]], bdeg[t])
+  }
+  B_star <- do.call(cbind, Design_list) # Collapsed
+  
+  eta1 <- B_star %*% alpha
+  predictions1 <- exp(eta1)
+  
+  # Grid
+  # List with evaluations in the grid
+  Grid_list = vector("list", m)
+  # Vector of covariates' basis sizes
+  grid_basis_length = rep(0,m)
+  
+  for (t in 1:m){                 # Covariates
+    Grid_list[[t]] = my.bbase4(grid[,t], K_sel[[t]], bdeg[t])
+    grid_basis_length[t] = dim(Grid_list[[t]])[2]
+  }
+  
+  grid1 <- grid # Initialize matrix to store grid values of each covariate
+  
+  for (t in 1:m){
+    B = Grid_list[[t]] # Obtain the design matrix
+    
+    # Calculate the indexes of coeffs.
+    if (t == 1){
+      index_0 = 2
+      index_1 = 1 + grid_basis_length[1]
+    }else{
+      index_0 = 2 + sum(grid_basis_length[1:(t-1)])
+      index_1 = index_0 + grid_basis_length[t] - 1
+    }
+    
+    # Covariate values in the grid
+    grid1[ ,t] <- B %*% alpha[index_0:index_1]
+  }
+  
+  ## P-splines algorithm
+  train <- data.frame(y = y, as.data.frame(X))
+  terms <- paste0("s(V", 1:m, ", bs = 'ps', k = ", ndx + bdeg, ")")
+  formula <- as.formula(paste("y ~", paste(terms, collapse = " + ")))
+  # Train
+  model2 <- mgcv::gam(formula, data = train, 
+                      family = poisson(link = "log"), method = "REML")
+  
+  # Test
+  test = as.data.frame(X)
+  eta2 <- as.vector(predict(model2, newdata = test, type = "link"))
+  predictions2 <- exp(eta2)
+  
+  # Grid
+  grid2 <- predict(model2, newdata = as.data.frame(grid), type = "terms")
+  
+  
+  ## Error metrics
+  MSE1 <- mean((eta_true - eta1)^2)
+  MSE2 <- mean((eta_true - eta2)^2)
+  MAE1 <- mean(abs(eta_true - eta1))
+  MAE2 <- mean(abs(eta_true - eta2))
+  
+  ## Fit metrics
+  EDF1 <- ncol(B_star)    # Unpenalized B-spline regression
+  EDF2 <- sum(model2$edf) # Given via gam()
+  
+  ## Compute the AIC for the A-Splines model (Standard B-Spline regression)
+  # Wood's
+  loglik <- sum(y * log(predictions1) - predictions1 - lfactorial(y))
+  AIC1 <- -2 * loglik + 2 * EDF1
+  BIC1 <- -2 * loglik + log(n) * EDF1
+  # P-Splines: Method = REML in P-Splines makes BIC() inadequate: Compute it manually 
+  AIC2 <- model2$aic
+  logLik_val <- sum(dpois(y, lambda = fitted(model2), log = TRUE))
+  BIC2 <-  -2 * logLik_val + log(n) * EDF2
+  
+  ## Assignment
+  return(list(MSE_Wood = MSE1,    # Wood's algorithm results
+              MAE_Wood = MAE1,
+              Grid_Wood = grid1,
+              K_sel_Wood = K_sel,
+              EDF_Wood = EDF1,
+              Size_Wood = EDF1,
+              AIC_Wood = AIC1,
+              BIC_Wood = BIC1,
+              MSE_Psp = MSE2,     # P-splines results
+              MAE_Psp = MAE2,
+              Grid_Psp = grid2,
+              EDF_Psp = EDF2,
+              AIC_Psp = AIC2,
+              BIC_Psp = BIC2,
+              Size_Psp = length(model2$coefficients)
+  ))
+}
+```
+
+```{r covariates_plot_2}
+covariates_plot_2 <- function(Results, grid, N, m, n){
+  
+  ## True covariates's effects and X
+  ll = simulate.data.pois1(n)
+  X = ll$X
+  FF = ll$FF
+  
+  ## Calculate the mean estimated covariates' effects over the simulations
+  # Wood's algorithm
+  Grid_Wood_matrices <- lapply(Results, function(x) x$Grid_Wood)
+  mean_Grid_Wood <- Reduce("+", Grid_Wood_matrices) / N
+  # P-Splines
+  Grid_Psp_matrices <- lapply(Results, function(x) x$Grid_Psp)
+  mean_Grid_Psp <- Reduce("+", Grid_Psp_matrices) / N
+  
+  
+  ## Marginalized covariates' effects
+  # Retrieve the Selected Knots List for each simulation
+  Knots_Selected <- lapply(Results, function(x) x$K_sel_Wood) 
+  
+  # Initialize list of plots
+  plot_list <- vector('list', m)
+  
+  plot_list <- lapply(1:m, function(t) {
+    
+    knots_t <- unlist(lapply(1:N, function(i) Knots_Selected[[i]][[t]]))
+    rug_df <- data.frame(x = knots_t)
+    
+    o <- order(X[, t])
+    plot <- ggplot() +
+      # True effect
+      geom_line(aes(x = X[o, t], y = FF[o, t], color = "True effect"), alpha = 0.6, linewidth = 3) +
+      # Mean P-Splines estimations
+      geom_line(aes(x = grid[, t], y = mean_Grid_Psp[, t], color = "P-Splines"), linewidth = 1.1, alpha = 0.8) +
+      # Mean Wood + A-Splines estimations
+      geom_line(aes(x = grid[, t], y = mean_Grid_Wood[, t], color = "AKSSAM"), linewidth = 1.1, alpha = 0.8) +
+      # 'Density' of selected knots
+      geom_rug(data = rug_df, aes(x = x), sides = "b", color = "black", alpha = 2/N, linewidth = 2, length = unit(0.05, "npc")) +
+      # Define manual color legend
+      scale_color_manual(
+        name = "Curves",
+        values = c("True effect" = "grey50", 
+                   "P-Splines" = "#1C86EE", 
+                   "AKSSAM" = "#FF3030")
+      ) +
+      scale_y_continuous(expand = expansion(mult = c(0.1, 0.1))) +
+      labs(title = paste0('Covariate ', t)) +
+      theme_light() + 
+      theme(
+        legend.position = "bottom",
+        axis.title = element_blank(),
+        panel.grid.minor = element_blank()                                        
+      )
+    return(plot)
+  })
+  
+  ## Combine the plots
+  combined <- wrap_plots(plot_list, nrow = 1, guides = "collect") +
+  plot_annotation(
+    title = paste0("Poisson Simulation, n = ", n),
+    theme = theme(
+      plot.title = element_text(size = 15, face = "bold"),
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.background = element_rect(fill = alpha("white", 0.7), color = NA)
+    )
+  )
+  
+  ## Output
+  return(combined)
+}
+```
+
+```{r error_plot_2}
+error_plot_2 <- function(Results){
+  
+  ## MSE and MAE across algorithms and simulations
+  MSE_Wood <- sapply(Results, function(x) x$MSE_Wood)
+  MAE_Wood <- sapply(Results, function(x) x$MAE_Wood)
+  EDF_Wood <- sapply(Results, function(x) x$EDF_Wood)
+  Size_Wood <- sapply(Results, function(x) x$Size_Wood)
+  
+  MSE_PSp  <- sapply(Results, function(x) x$MSE_Psp)
+  MAE_PSp  <- sapply(Results, function(x) x$MAE_Psp)
+  EDF_Psp <- sapply(Results, function(x) x$EDF_Psp)
+  Size_Psp <- sapply(Results, function(x) x$Size_Psp)
+  
+  df <- data.frame(
+    Value = c(MSE_Wood, MSE_PSp, MAE_Wood, MAE_PSp, EDF_Wood, EDF_Psp, Size_Wood, Size_Psp),
+    Metric = rep(c("MSE", "MSE", "MAE", "MAE", "EDF", "EDF", "Basis Size", "Basis Size"), each = length(Results)),
+    Method = rep(c(rep("AKSSAM", length(Results)), rep("P-Splines", length(Results))), times = 4)
+  )
+  df$Metric <- factor(df$Metric, levels = c("MSE", "MAE", "EDF", "Basis Size"))
+  
+  ## Boxplot of the error metrics
+  Performance_plot <- ggplot(df, aes(x = Method, y = Value, color = Method)) +
+    geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
+    labs(title = "Performance Metrics",
+         x = "Metric", y = "Value") +
+    scale_color_manual(
+      values = c("AKSSAM" = "#FF3030", "P-Splines" = "#1C86EE"),
+      labels = c("AKSSAM", "P-Splines"),
+      name = "Algorithm"
+    ) +
+    facet_wrap(~ Metric, scales = "free_y") + 
+    theme_light(base_size = 14) +
+    theme(
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.title = element_text(size = 12),
+      legend.text = element_text(size = 10)
+    )
+  
+  
+  ## Output
+  return(Performance_plot)
+}
+```
+
+```{r simulation_wrapper_2}
+simulation_wrapper_2 <- function(N, n, m, family, ndx, bdeg, lambda.init,
+                                 maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                 epsilon){
+  
+  # Set seed for reproducibility
+  set.seed(12345)
+  
+  Results = rep(list(list(MSE_Wood = NA, MAE_Wood = NA, Grid_Wood = NA, 
+                          K_sel_Wood = vector('list', m), EDF_Wood = NA,
+                          AIC_Wood = NA, BIC_Wood = NA, Size_Wood = NA,
+                          MSE_Psp = NA, MAE_Psp = NA,  Grid_Psp = NA, 
+                          EDF_Psp = NA, AIC_Psp = NA, BIC_Psp = NA, 
+                          Size_Psp = NA)), N)
+  
+  ## Create evaluation grid
+  grid <- sapply(1:m, function(j) seq(0, 1, length.out = 100))
+  
+  ## Loop which performs N iterations of the simulation
+  i <- 1
+  try_tolerance <- 3 # Tolerance for retries before aborting (2 tries)
+  try_attempts <- 0  # Nº of attempts
+  total_fails <- 0   # Total Nº of fails
+  while (i <= N) {
+    
+    # Simulate once the situation with error handling
+    try_result <- try({
+      result <- simulation_2(n, m, family, ndx, bdeg, lambda.init,
+                             maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, 
+                             epsilon, grid)
+      
+      # If the function worked properly, store the result, increase i
+      # and restart try_attempts
+      Results[[i]] <- result
+      print(paste('Simulataion ', i, 'done.'))
+      i <- i + 1
+      try_attempts <- 0
+    }, silent = FALSE)
+    
+    # Error handling
+    if (inherits(try_result, "try-error")) {
+      # Increase try_attempts
+      try_attempts <- try_attempts + 1
+      total_fails <- total_fails + 1
+      print(paste('try_attempt:', try_attempts))
+    }
+    
+    # Check if the attempt tolerance is met
+    if (try_attempts == try_tolerance){
+      warning('Simulation error: Attempt tolerance met \n')
+      break
+    }
+  }
+  
+  ## Print the total nº of fails
+  print(paste('The total failed attemps were:', total_fails))
+  
+  ## Covariates' estimated effect plot 
+  covariates_plot <- covariates_plot_2(Results, grid, N, m, n)
+  
+  ## Error metrics plot and values
+  err_plot <- error_plot_2(Results)
+  err_metrics = list(mean_MSE_Wood = NA, sd_MSE_Wood = NA, 
+                     mean_MAE_Wood = NA, sd_MAE_Wood = NA, 
+                     mean_AIC_Wood = NA, sd_AIC_Wood = NA, 
+                     mean_BIC_Wood = NA, sd_BIC_Wood = NA,
+                     mean_EDF_Wood = NA, sd_EDF_Wood = NA,
+                     mean_Size_Wood = NA, sd_Size_Wood = NA,
+                     mean_MSE_Psp = NA, sd_MSE_Psp = NA, 
+                     mean_MAE_Psp = NA, sd_MAE_Psp = NA, 
+                     mean_AIC_Psp = NA, sd_AIC_Psp = NA, 
+                     mean_BIC_Psp = NA, sd_BIC_Psp = NA,
+                     mean_EDF_Psp = NA, sd_EDF_Psp = NA,
+                     mean_Size_Psp = NA, sd_Size_Psp = NA)
+  
+  # Calculate the mean error terms across iterations
+  # MSE_Wood
+  err_metrics$mean_MSE_Wood <- mean(sapply(Results, function(x) x$MSE_Wood), na.rm = TRUE)
+  err_metrics$sd_MSE_Wood <- sd(sapply(Results, function(x) x$MSE_Wood), na.rm = TRUE)
+  # MAE_Wood
+  err_metrics$mean_MAE_Wood <- mean(sapply(Results, function(x) x$MAE_Wood), na.rm = TRUE)
+  err_metrics$sd_MAE_Wood <- sd(sapply(Results, function(x) x$MAE_Wood), na.rm = TRUE)
+  # AIC_Wood
+  err_metrics$mean_AIC_Wood <- mean(sapply(Results, function(x) x$AIC_Wood), na.rm = TRUE)
+  err_metrics$sd_AIC_Wood <- sd(sapply(Results, function(x) x$AIC_Wood), na.rm = TRUE)
+  # BIC_Wood
+  err_metrics$mean_BIC_Wood <- mean(sapply(Results, function(x) x$BIC_Wood), na.rm = TRUE)
+  err_metrics$sd_BIC_Wood <- sd(sapply(Results, function(x) x$BIC_Wood), na.rm = TRUE)
+  # EDF_Wood
+  err_metrics$mean_EDF_Wood <- mean(sapply(Results, function(x) x$EDF_Wood), na.rm = TRUE)
+  err_metrics$sd_EDF_Wood <- sd(sapply(Results, function(x) x$EDF_Wood), na.rm = TRUE)
+  # Size_Wood
+  err_metrics$mean_Size_Wood <- mean(sapply(Results, function(x) x$Size_Wood), na.rm = TRUE)
+  err_metrics$sd_Size_Wood <- sd(sapply(Results, function(x) x$Size_Wood), na.rm = TRUE)
+  # MSE_Psp
+  err_metrics$mean_MSE_Psp <- mean(sapply(Results, function(x) x$MSE_Psp), na.rm = TRUE)
+  err_metrics$sd_MSE_Psp <- sd(sapply(Results, function(x) x$MSE_Psp), na.rm = TRUE)
+  # MAE_Psp
+  err_metrics$mean_MAE_Psp <- mean(sapply(Results, function(x) x$MAE_Psp), na.rm = TRUE)
+  err_metrics$sd_MAE_Psp <- sd(sapply(Results, function(x) x$MAE_Psp), na.rm = TRUE)
+  # AIC_Psp
+  err_metrics$mean_AIC_Psp <- mean(sapply(Results, function(x) x$AIC_Psp), na.rm = TRUE)
+  err_metrics$sd_AIC_Psp <- sd(sapply(Results, function(x) x$AIC_Psp), na.rm = TRUE)
+  # BIC_Psp
+  err_metrics$mean_BIC_Psp <- mean(sapply(Results, function(x) x$BIC_Psp), na.rm = TRUE)
+  err_metrics$sd_BIC_Psp <- sd(sapply(Results, function(x) x$BIC_Psp), na.rm = TRUE)
+  # EDF_Psp
+  err_metrics$mean_EDF_Psp <- mean(sapply(Results, function(x) x$EDF_Psp), na.rm = TRUE)
+  err_metrics$sd_EDF_Psp <- sd(sapply(Results, function(x) x$EDF_Psp), na.rm = TRUE)
+  # Size_Psp
+  err_metrics$mean_Size_Psp <- mean(sapply(Results, function(x) x$Size_Psp), na.rm = TRUE)
+  err_metrics$sd_Size_Psp <- sd(sapply(Results, function(x) x$Size_Psp), na.rm = TRUE)
+  
+  ## Output
+  return(list(Results = Results,                 # List with results for each simulation
+              covariates_plot = covariates_plot, # Covariates' estimated effect plot 
+              err_plot = err_plot,               # Error metrics plot
+              err_metrics = err_metrics          # Error metrics
+  ))
+}
+```
+
+### n = 300
+
+```{r Poisson n 300}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+## Simulation Parameters
+N = 50   # Nº of simulation repetitions
+n = 300  # Nº of samples
+m = 3    # Nº of covariates
+
+## Convergence and tolerance conditions
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "poisson"               # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(0.1, m)         # Initialized penalization
+
+## Perform the simulations
+ll_Poisson_n1 <- simulation_wrapper_2(N, n, m, family, ndx, bdeg, lambda.init,
+                                      maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                      epsilon)
+
+## Plots
+ll_Poisson_n1$covariates_plot
+ll_Poisson_n1$err_plot
+
+wrap_plots(
+  ll_Poisson_n1$covariates_plot, 
+  ll_Poisson_n1$err_plot, 
+  widths = c(2, 1)
+) + 
+  plot_annotation(
+    title = paste0("Poisson Simulation, n = ", n),
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+ll_Poisson_n1$err_metrics
+```
+
+### n = 500
+
+```{r Poisson n 500}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+## Simulation Parameters
+N = 50   # Nº of simulation repetitions
+n = 500  # Nº of samples
+m = 3    # Nº of covariates
+
+## Convergence and tolerance conditions
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "poisson"               # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(0.1, m)         # Initialized penalization
+
+## Perform the simulations
+ll_Poisson_n2 <- simulation_wrapper_2(N, n, m, family, ndx, bdeg, lambda.init,
+                                      maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                      epsilon)
+
+## Plots
+ll_Poisson_n2$covariates_plot
+ll_Poisson_n2$err_plot
+
+wrap_plots(
+  ll_Poisson_n2$covariates_plot, 
+  ll_Poisson_n2$err_plot, 
+  widths = c(2, 1)
+) + 
+  plot_annotation(
+    title = paste0("Poisson Simulation, n = ", n),
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+ll_Poisson_n2$err_metrics
+```
+
+### n = 800
+
+```{r Poisson n 800}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
+## Simulation Parameters
+N = 50   # Nº of simulation repetitions
+n = 800  # Nº of samples
+m = 3    # Nº of covariates
+
+## Convergence and tolerance conditions
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "poisson"               # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(0.1, m)         # Initialized penalization
+
+## Perform the simulations
+ll_Poisson_n3 <- simulation_wrapper_2(N, n, m, family, ndx, bdeg, lambda.init,
+                                      maxiter1, maxiter2, maxiter3, tol1, tol2, tol3,
+                                      epsilon)
+
+## Plots
+ll_Poisson_n3$covariates_plot
+ll_Poisson_n3$err_plot
+
+wrap_plots(
+  ll_Poisson_n3$covariates_plot, 
+  ll_Poisson_n3$err_plot, 
+  widths = c(2, 1)
+) + 
+  plot_annotation(
+    title = paste0("Poisson Simulation, n = ", n),
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+ll_Poisson_n3$err_metrics
+```
+
+### Summary Table
+
+#### Full table
+
+```{r Poisson Summary Table}
+# Initialize the table
+poisson_table = data.frame(
+  n = c(300, 500, 800)
+)
+
+# Define indexes for n
+n_vals <- c(300, 500, 800)
+
+# Iterate through all possible n's
+row_index <- 1
+for (i in 1:3) {
+  # Construct object name
+  obj_name <- paste0("ll_Poisson_n", i)
+    
+  # Fill the appropriate row
+  poisson_table[row_index, names(ll_Poisson_n1$err_metrics)] <- get(obj_name)$err_metrics
+    
+  # Update the row index
+  row_index <- row_index + 1
+}
+
+
+
+# Format the table such that the error terms are included as mean (sd)
+poisson_table2 <- poisson_table
+
+# Obtain all mean columns and iterate along them
+mean_cols <- grep("^mean_", names(poisson_table), value = TRUE)
+for (mean_col in mean_cols) {
+  # Get the corresponding sd column
+  sd_col <- sub("^mean_", "sd_", mean_col)
+  # Format the column
+  formatted_col <- sprintf("%.3f (%.3f)", poisson_table[[mean_col]], poisson_table[[sd_col]])
+  poisson_table2[[mean_col]] <- formatted_col
+}
+# Erase sd columns
+poisson_table2 <- poisson_table2[ , !grepl("^sd_", names(poisson_table2))]
+
+names(poisson_table2) = c('n',
+                          'MSE AKSSAM', 'MAE AKSSAM', 'AIC AKSSAM', 'BIC AKSSAM', 'EDF AKSSAM', 'Size AKSSAM',
+                          "MSE P-Splines", "MAE P-Splines", "AIC P-Splines", "BIC P-Splines", "EDF P-Splines", "Size P-Splines")
+
+
+# Display the Table
+knitr::kable(poisson_table2, format = "html", caption = "Mean Results for the Poisson Scenario")
+
+# LaTex code
+xtable::xtable(poisson_table2)
+```
+
+#### Reduced table
+
+```{r}
+reduced_poisson_table2 <- poisson_table2[, c(1,2,3,5,6,8,9,11,12,13)]
+
+names(reduced_poisson_table2) = c('n', 
+                           'MSE AKSSAM', 'MAE AKSSAM', 'BIC AKSSAM', 'EDF & Size AKSSAM',
+                           "MSE P-Splines", "MAE P-Splines", "BIC P-Splines", "EDF P-Splines", "Size P-Splines")
+
+# Display the Table
+knitr::kable(reduced_poisson_table2, format = "html", caption = "Mean Results for the Poisson Scenario")
+
+
+# LaTex code
+xtable::xtable(reduced_poisson_table2)
+```
+
+### Save the RData
+
+```{r}
+# Checkpoint
+save.image(file = "simulations.RData")
+```
+
+
+### Export the images
+
+```{r}
+# Define indexes for n and SNR
+n_vals <- c(300, 500, 800)
+
+# Iterate through all possible n and SNR combinations
+for (i in 1:3) {
+  # Construct object name
+  obj_name <- paste0("ll_Poisson_n", i)
+    
+  # Access the object by name
+  obj <- get(obj_name)
+    
+  # Save the Covariates' plot
+  path <- paste0("Images/TFM/", obj_name, "_Covs.png")
+  png(path, width = 1000, height = 500)
+  print(obj$covariates_plot)
+  dev.off()
+    
+  # Save the Error plot
+  path <- paste0("Images/TFM/", obj_name, "_Errs.png")
+  png(path, width = 500, height = 500)
+  print(obj$err_plot)
+  dev.off()
+}
+```

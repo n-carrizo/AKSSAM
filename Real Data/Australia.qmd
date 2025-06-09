@@ -1,0 +1,637 @@
+---
+title: "A-Splines Algorithm with multiple additive terms - Real Data: Australian electricity demand data"
+author: "Nicolas Carrizosa Arias"
+format: 
+  html:
+    toc: true        
+    toc-depth: 4     
+    toc-location: left  
+    self-contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = TRUE)  # Disable warnings
+```
+
+# Functions
+
+```{r library, echo = FALSE, warning = FALSE, message=FALSE}
+# Required Packages
+library(qgam)
+library(corpcor)
+library(ggplot2)
+library(aspline)
+library(tidyverse)
+library(splines2)
+library(splines)
+library(pracma)
+library(MASS)
+library(Matrix)
+library(gridExtra)
+library(dplyr)
+library(caret)
+library(pROC)
+library(grid)
+library(gridExtra)
+library(gridGraphics)
+library(caret)
+library(corrplot)
+library(corpcor)
+library(ggplot2)
+library(aspline)
+library(tidyverse)
+library(splines2)
+library(splines)
+library(pracma)
+library(MASS)
+library(Matrix)
+library(gridExtra)
+library(grid)
+library(patchwork) 
+
+# Our functions
+source("../Functions.R")
+```
+
+
+We will be using 5-fold CV to check for model performance. Notice that we will always ensure that the maximum and minimum values for each covariate are included in the training sample.
+
+```{r K-fold function}
+kfold <- function(X, y, K){
+  
+  # Nº of instances and covariates
+  n = length(y)
+  m = dim(X)[2]
+  
+  # Identify the max and min covariates values' indexes
+  ext_indexes = rep(0, 2*m) # Max of 2*m indexes
+  grid <- matrix(0, ncol = m, nrow = 100) # Plotting grid
+  for (t in 1:m){
+    max_val = which.max(X[,t])
+    min_val = which.min(X[,t])
+    ext_indexes[2*(t-1) + 1] = max_val # Index for min obs of covariate t
+    ext_indexes[2*(t-1) + 2] = min_val # Index for max obs of covariate t
+    
+    grid[,t] = seq(X[min_val,t], X[max_val,t], length.out = 100) # Grid for i-th covariate
+  }
+  # Eliminate repeated values and possible 0's
+  ext_indexes = unique(ext_indexes[ext_indexes != 0])
+  
+  # Create the folds
+  folds <- sample(rep(1:K, length.out = n)) 
+  
+  # Create a folds matrix which will have 1's if the data is included in the 
+  # training sample for each fold (column)
+  folds_matrix <- matrix(0, ncol = K, nrow = n)
+  for (i in 1:K){
+    # Add the extreme values
+    training_idx <- unique(c(which(folds != i), ext_indexes)) 
+    #Inidcate with 1 the training obs. indexes
+    folds_matrix[training_idx, i] = 1
+  }
+  
+  
+  # Output
+  return(list(folds = folds_matrix, # Folds matrix
+              grid = grid           # Plotting grid
+              ))
+}
+```
+
+```{r}
+fitting_function = function(X_train, X_test, y_train, y_test,
+                            ndx, bdeg, lambda.init,
+                            maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
+                            grid){
+  
+  
+  # Nº of instances and covariates
+  n = length(y_train)
+  m = dim(X_train)[2]
+  family = "gaussian"
+  
+  ## Train both our model and P-splines model
+  # Compute the equally-spaced knot vectors
+  K = vector('list', m)
+  for (t in 1:m){
+    K[[t]] = my.knots(X_train[,t], min(X_train[,t]), max(X_train[,t]), ndx[t], bdeg[t])
+  }
+  
+  ## Our algorithm 
+  # Train
+  model1 <- GAM.asplines3.wood2(X_train, y_train, family, lambda.init, ndx, bdeg, 
+                                maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, 
+                                epsilon)
+  
+  # List with selected knots and parameter vector
+  K_sel <- model1$K_sel
+  alpha <- as.vector(model1$alpha.new)
+  
+  # Test
+  # List with new design matrices
+  Design_list = vector("list", m + 1)
+  Design_list[[1]] = matrix(1, length(y_test), 1) # Intercept
+  for (t in 1:m){                    # Covariates
+    Design_list[[t+1]] = my.bbase4(X_test[,t], K_sel[[t]], bdeg[t])
+  }
+  B_star <- do.call(cbind, Design_list) # Collapsed
+  
+  predictions1 <- B_star %*% alpha
+  
+  # Grid
+  # List with evaluations in the grid
+  Grid_list = vector("list", m)
+  # Vector of covariates' basis sizes
+  grid_basis_length = rep(0,m)
+  
+  for (t in 1:m){                 # Covariates
+    Grid_list[[t]] = my.bbase4(grid[,t], K_sel[[t]], bdeg[t])
+    grid_basis_length[t] = dim(Grid_list[[t]])[2]
+  }
+  
+  grid1 <- grid # Initialize matrix to store grid values of each covariate
+  
+  for (t in 1:m){
+    B = Grid_list[[t]] # Obtain the design matrix
+    
+    # Calculate the indexes of coeffs.
+    if (t == 1){
+      index_0 = 2
+      index_1 = 1 + grid_basis_length[1]
+    }else{
+      index_0 = 2 + sum(grid_basis_length[1:(t-1)])
+      index_1 = index_0 + grid_basis_length[t] - 1
+    }
+    
+    # Covariate values in the grid
+    grid1[ ,t] <- B %*% alpha[index_0:index_1]
+  }
+  
+  ## P-splines algorithm
+  data <- data.frame(y = y_train, as.data.frame(X_train))
+  terms <- paste0("s(V", 1:m, ", bs = 'ps', k = ", ndx + bdeg, ")") 
+  formula <- as.formula(paste("y ~", paste(terms, collapse = " + ")))
+  # Train
+  model2 <- mgcv::gam(formula, data = data, method = "REML")
+  
+  # Test
+  test = as.data.frame(X_test)
+  predictions2 <- as.vector(predict(model2, newdata = test))
+    
+  # Grid
+  grid2 <- predict(model2, newdata = as.data.frame(grid), type = "terms")
+  
+  
+  ## Error metrics
+  MSE1 <- mean((y_test - predictions1)^2)
+  MSE2 <- mean((y_test - predictions2)^2)
+  MAE1 <- mean(abs(y_test - predictions1))
+  MAE2 <- mean(abs(y_test - predictions2))
+  
+  ## Fit metrics
+  EDF1 <- ncol(B_star)    # Unpenalized B-spline regression
+  EDF2 <- sum(model2$edf) # Given via gam()
+  
+  ## Compute the AIC for the A-Splines model (Standard B-Spline regression)
+  # Wood's
+  # List with new design matrices
+  Old_Design_list = vector("list", m + 1)
+  Old_Design_list[[1]] = matrix(1, length(y_train), 1) # Intercept
+  for (t in 1:m){                    # Covariates
+    Old_Design_list[[t+1]] = my.bbase4(X_train[,t], K_sel[[t]], bdeg[t])
+  }
+  B_star_old <- do.call(cbind, Old_Design_list) # Collapsed
+  residuals_train <- (y_train - B_star_old %*% alpha)
+  sigma2_hat <- mean(residuals_train^2)
+  loglik <- -0.5 * n * log(2 * pi * sigma2_hat) - 0.5 * sum(residuals_train^2) / sigma2_hat
+   
+  AIC1 <- -2 * loglik + 2 * EDF1
+  BIC1 <- -2 * loglik + log(n) * EDF1
+  # P-Splines: Method = REML in P-Splines makes BIC() inadequate: Compute it manuallY
+  residuals_train2 <- (y_train - as.vector(predict(model2)))
+  sigma2_hat2 <- mean(residuals_train2^2) 
+  logLik_val <- sum(dnorm(y_train, mean = as.vector(predict(model2)), sd = sqrt(sigma2_hat2), log = TRUE))
+  AIC2 <- -2 * logLik_val + 2 * EDF2
+  BIC2 <-  -2 * logLik_val + log(n) * EDF2
+  
+  ## Output
+  return(list(MSE_Wood = MSE1,    # Wood's algorithm results
+            MAE_Wood = MAE1,
+            Grid_Wood = grid1,
+            K_sel_Wood = K_sel,
+            EDF_Wood = EDF1,
+            Size_Wood = EDF1,
+            AIC_Wood = AIC1,
+            BIC_Wood = BIC1,
+            MSE_Psp = MSE2,       # P-splines results
+            MAE_Psp = MAE2,
+            Grid_Psp = grid2,
+            EDF_Psp = EDF2,
+            AIC_Psp = AIC2,
+            BIC_Psp = BIC2,
+            Size_Psp = length(model2$coefficients)
+))
+}
+```
+
+```{r covariates_plot}
+covariates_plot <- function(Results, grid, m, k){
+  
+  ## Calculate the mean estimated covariates' effects over the simulations
+  # Wood's algorithm
+  Grid_Wood_matrices <- lapply(Results, function(x) x$Grid_Wood)
+  mean_Grid_Wood <- Reduce("+", Grid_Wood_matrices) / k
+  # P-Splines
+  Grid_Psp_matrices <- lapply(Results, function(x) x$Grid_Psp)
+  mean_Grid_Psp <- Reduce("+", Grid_Psp_matrices) / k
+  
+  
+  ## Marginalized covariates' effects
+  # Retrieve the Selected Knots List for each simulation
+  Knots_Selected <- lapply(Results, function(x) x$K_sel_Wood) 
+  
+  # Initialize list of plots
+  plot_list <- vector('list', m)
+  
+  plot_list <- lapply(1:m, function(t) {
+    
+    if (t == 1){temp_title = "doy - Day of the year"}
+    if (t == 2){temp_title = "tod - Time of the day"}
+    if (t == 3){temp_title = "temp - Temperature"}
+    if (t == 4){temp_title = "dem48 - Lagged demand"}
+    
+    knots_t <- unlist(lapply(1:k, function(i) Knots_Selected[[i]][[t]]))
+    rug_df <- data.frame(x = knots_t)
+    
+    plot <- ggplot() +
+      # Mean P-Splines estimations
+      geom_line(aes(x = grid[, t], y = mean_Grid_Psp[, t], color = "P-Splines"), linewidth = 1.2, alpha = 0.7) +
+      # Mean Wood + A-Splines estimations
+      geom_line(aes(x = grid[, t], y = mean_Grid_Wood[, t], color = "AKSSAM"), linewidth = 1.2, alpha = 0.7) +
+      # 'Density' of selected knots
+      geom_rug(data = rug_df, aes(x = x), sides = "b", color = "black", alpha = 1/k, linewidth = 2, length = unit(0.05, "npc")) +
+      # Define manual color legend
+      scale_color_manual(
+        name = "Curves",
+        values = c("P-Splines" = "#1C86EE", 
+                   "AKSSAM" = "#FF3030")
+      ) +
+      scale_y_continuous(expand = expansion(mult = c(0.1, 0.1))) +
+      labs(title = temp_title) +
+      theme_light() + 
+      theme(
+        axis.title = element_blank(),                                               
+        panel.grid.minor = element_blank()  
+        )
+    return(plot)
+  })
+  
+  ## Combine the plots
+  combined <- wrap_plots(plot_list, nrow = 2, guides = "collect") +
+  plot_annotation(
+    title = "Australian electricity demand",
+    theme = theme(
+      plot.title = element_text(size = 15, face = "bold")
+    )
+  ) & 
+  theme(
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 9),
+    legend.background = element_rect(fill = alpha("white", 0.7), color = NA)
+  )
+  
+  ## Output
+  return(combined)
+}
+```
+
+
+```{r error_plot}
+error_plot <- function(Results){
+  
+   ## MSE and MAE across algorithms and simulations
+  MSE_Wood <- sapply(Results, function(x) x$MSE_Wood)
+  MAE_Wood <- sapply(Results, function(x) x$MAE_Wood)
+  EDF_Wood <- sapply(Results, function(x) x$EDF_Wood)
+  Size_Wood <- sapply(Results, function(x) x$Size_Wood)
+  
+  MSE_PSp  <- sapply(Results, function(x) x$MSE_Psp)
+  MAE_PSp  <- sapply(Results, function(x) x$MAE_Psp)
+  EDF_Psp <- sapply(Results, function(x) x$EDF_Psp)
+  Size_Psp <- sapply(Results, function(x) x$Size_Psp)
+  
+  df <- data.frame(
+    Value = c(MSE_Wood, MSE_PSp, MAE_Wood, MAE_PSp, EDF_Wood, EDF_Psp, Size_Wood, Size_Psp),
+    Metric = rep(c("MSE", "MSE", "MAE", "MAE", "EDF", "EDF", "Basis Size", "Basis Size"), each = length(Results)),
+    Method = rep(c(rep("AKSSAM", length(Results)), rep("P-Splines", length(Results))), times = 4)
+  )
+  df$Metric <- factor(df$Metric, levels = c("MSE", "MAE", "EDF", "Basis Size"))
+  
+  ## Boxplot of the error metrics
+  Performance_plot <- ggplot(df, aes(x = Method, y = Value, color = Method)) +
+    geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
+    labs(title = "Performance Metrics",
+         x = "Method", y = "Value") +
+    scale_color_manual(
+      values = c("AKSSAM" = "#FF3030", "P-Splines" = "#1C86EE"),
+      labels = c("AKKSAM", "P-Splines"),
+      name = "Algorithm"
+    ) +
+    facet_wrap(~ Metric, scales = "free_y") + 
+    theme_light(base_size = 14) +
+    theme(
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.title = element_text(size = 12),
+      legend.text = element_text(size = 10)
+    )
+  
+  ## Output
+  return(Performance_plot)
+}
+```
+
+
+
+```{r}
+wrapper_function = function(k, 
+                            maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
+                            ndx, bdeg, lambda.init){
+  
+  # Load the dataset
+  data(AUDem)
+  Australia <- AUDem$meanDem
+  # Consider only the numerical variables
+  Australia <- Australia %>% dplyr::select(-date, -dow)
+  # Covariate matrix and response
+  X <- Australia %>% dplyr::select(-dem) %>% as.matrix %>% scale(center = TRUE, scale = TRUE) %>% unname 
+  attr(X, "scaled:center") <- NULL
+  y <- Australia %>% dplyr::select(dem) %>% unlist %>% unname
+  
+  
+  # Nº of instances and covariates
+  n = length(y)
+  m = dim(as.matrix(X))[2]
+  family = "gaussian"
+  
+  # List which contains a list for every repetition storing the 
+  # repetition's MSE, MAE and values over a grid of values of x 
+  Results = rep(list(list(MSE_Wood = NA, MAE_Wood = NA, Grid_Wood = NA, 
+                          K_sel_Wood = vector('list', m), EDF_Wood = NA,
+                          AIC_Wood = NA, BIC_Wood = NA, Size_Wood = NA,
+                          MSE_Psp = NA, MAE_Psp = NA,  Grid_Psp = NA, 
+                          EDF_Psp = NA, AIC_Psp = NA, BIC_Psp = NA, 
+                          Size_Psp = NA)), k)
+  
+  # 5-folds: Set seed for reproducibility
+  set.seed(1234)
+  
+  ll <- kfold(X, y, k)
+  folds <- ll$folds
+  # Get the plotting grid as well
+  grid <- ll$grid
+  
+  # Check if k = 1
+  if (k == 1){
+    # Train/Test equal
+    X_train <- X_test <- X
+    y_train <- y_test <- y
+    
+    # Fit the algorithms and store the results
+    result = fitting_function(X_train, X_test, y_train, y_test,
+                              ndx, bdeg, lambda.init,
+                              maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
+                              grid)
+    Results[[1]] <- result
+  } else {
+    # Fit the model for each split
+    for (i in 1:k){
+      # Obtain the Train/Test split
+      train_idx <- which(folds[,i] == 1)
+      X_train <- X[train_idx,] %>% as.matrix
+      y_train <- y[train_idx]
+      X_test <- X[-train_idx,] %>% as.matrix
+      y_test <- y[-train_idx]
+      
+      # Fit the algorithms and store the results
+      result = fitting_function(X_train, X_test, y_train, y_test,
+                                ndx, bdeg, lambda.init,
+                                maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
+                                grid)
+      Results[[i]] <- result
+    }
+  }
+  
+  
+  ## Covariates' estimated effect plot 
+  covariates_plot <- covariates_plot(Results, grid, m, k)
+  
+  
+  ## Error metrics plot and values
+  err_plot <- error_plot(Results)
+  err_metrics = list(mean_MSE_Wood = NA, sd_MSE_Wood = NA, 
+                     mean_MAE_Wood = NA, sd_MAE_Wood = NA, 
+                     mean_AIC_Wood = NA, sd_AIC_Wood = NA, 
+                     mean_BIC_Wood = NA, sd_BIC_Wood = NA,
+                     mean_EDF_Wood = NA, sd_EDF_Wood = NA,
+                     mean_Size_Wood = NA, sd_Size_Wood = NA,
+                     mean_MSE_Psp = NA, sd_MSE_Psp = NA, 
+                     mean_MAE_Psp = NA, sd_MAE_Psp = NA, 
+                     mean_AIC_Psp = NA, sd_AIC_Psp = NA, 
+                     mean_BIC_Psp = NA, sd_BIC_Psp = NA,
+                     mean_EDF_Psp = NA, sd_EDF_Psp = NA,
+                     mean_Size_Psp = NA, sd_Size_Psp = NA)
+  
+  # Calculate the mean error terms across iterations
+  # MSE_Wood
+  err_metrics$mean_MSE_Wood <- mean(sapply(Results, function(x) x$MSE_Wood), na.rm = TRUE)
+  err_metrics$sd_MSE_Wood <- sd(sapply(Results, function(x) x$MSE_Wood), na.rm = TRUE)
+  # MAE_Wood
+  err_metrics$mean_MAE_Wood <- mean(sapply(Results, function(x) x$MAE_Wood), na.rm = TRUE)
+  err_metrics$sd_MAE_Wood <- sd(sapply(Results, function(x) x$MAE_Wood), na.rm = TRUE)
+  # AIC_Wood
+  err_metrics$mean_AIC_Wood <- mean(sapply(Results, function(x) x$AIC_Wood), na.rm = TRUE)
+  err_metrics$sd_AIC_Wood <- sd(sapply(Results, function(x) x$AIC_Wood), na.rm = TRUE)
+  # BIC_Wood
+  err_metrics$mean_BIC_Wood <- mean(sapply(Results, function(x) x$BIC_Wood), na.rm = TRUE)
+  err_metrics$sd_BIC_Wood <- sd(sapply(Results, function(x) x$BIC_Wood), na.rm = TRUE)
+  # EDF_Wood
+  err_metrics$mean_EDF_Wood <- mean(sapply(Results, function(x) x$EDF_Wood), na.rm = TRUE)
+  err_metrics$sd_EDF_Wood <- sd(sapply(Results, function(x) x$EDF_Wood), na.rm = TRUE)
+  # Size_Wood
+  err_metrics$mean_Size_Wood <- mean(sapply(Results, function(x) x$Size_Wood), na.rm = TRUE)
+  err_metrics$sd_Size_Wood <- sd(sapply(Results, function(x) x$Size_Wood), na.rm = TRUE)
+  # MSE_Psp
+  err_metrics$mean_MSE_Psp <- mean(sapply(Results, function(x) x$MSE_Psp), na.rm = TRUE)
+  err_metrics$sd_MSE_Psp <- sd(sapply(Results, function(x) x$MSE_Psp), na.rm = TRUE)
+  # MAE_Psp
+  err_metrics$mean_MAE_Psp <- mean(sapply(Results, function(x) x$MAE_Psp), na.rm = TRUE)
+  err_metrics$sd_MAE_Psp <- sd(sapply(Results, function(x) x$MAE_Psp), na.rm = TRUE)
+  # AIC_Psp
+  err_metrics$mean_AIC_Psp <- mean(sapply(Results, function(x) x$AIC_Psp), na.rm = TRUE)
+  err_metrics$sd_AIC_Psp <- sd(sapply(Results, function(x) x$AIC_Psp), na.rm = TRUE)
+  # BIC_Psp
+  err_metrics$mean_BIC_Psp <- mean(sapply(Results, function(x) x$BIC_Psp), na.rm = TRUE)
+  err_metrics$sd_BIC_Psp <- sd(sapply(Results, function(x) x$BIC_Psp), na.rm = TRUE)
+  # EDF_Psp
+  err_metrics$mean_EDF_Psp <- mean(sapply(Results, function(x) x$EDF_Psp), na.rm = TRUE)
+  err_metrics$sd_EDF_Psp <- sd(sapply(Results, function(x) x$EDF_Psp), na.rm = TRUE)
+  # Size_Psp
+  err_metrics$mean_Size_Psp <- mean(sapply(Results, function(x) x$Size_Psp), na.rm = TRUE)
+  err_metrics$sd_Size_Psp <- sd(sapply(Results, function(x) x$Size_Psp), na.rm = TRUE)
+
+  ## Output
+  return(list(Results = Results,                 # List with results for each simulation
+              covariates_plot = covariates_plot, # Covariates' estimated effect plot 
+              err_plot = err_plot,               # Error metrics plot
+              err_metrics = err_metrics          # Error metrics
+              ))
+  
+}
+```
+
+
+# Australian electricity demand data
+
+## Description
+
+```{r}
+# Load the dataset
+data(AUDem)
+Australia<-AUDem$meanDem
+head(Australia)
+
+# Select 4 variables of interest
+data <- Australia %>% dplyr::select(dem,temp, doy, tod, dem48) 
+head(data)
+
+## Pair Plot
+data_no_dem <- data %>% scale(center = TRUE, scale = TRUE)
+pairs(data_no_dem,
+      pch = 19,
+      main = "AUDem",
+      col = 'grey40',
+      cex = 0.5)
+
+## Corrplot
+# Correlation matrix
+cor_matrix <- cor(data_no_dem)
+corrplot(cor_matrix, method = "color",
+         addCoef.col = "black",                        
+         number.cex = 0.7,                             
+         tl.cex = 0.8,                                
+         tl.col = "black",                             
+         order = "hclust")
+```
+
+## GAM Fitting
+
+```{r}
+## Convergence and tolerance conditions
+m = 4                       # Nº of covariates
+maxiter1 = 100                   # Max iterations for Wood 
+maxiter2 = 300                   # Max iterations for A-Ridge
+maxiter3 = 50                    # Max iterations for IRLS
+tol1 = 1e-5                      # Tolerance for Wood 
+tol2 = 1e-5                      # Tolerance for A-Ridge
+tol3 = 1e-5                      # Tolerance for IRLS
+epsilon = 1e-5                   # Extra term in A-Ridge approx.
+family = "gaussian"              # Family term for GLM
+ndx = rep(40, m)                 # Nº of inner intervals
+bdeg = rep(3, m)                 # Degrees of the B-Spline basis
+
+## Construct the penalizations 
+lambda.init = rep(10, m)         # Initialized penalization
+
+## K-Fold settings
+k = 5
+
+ll <- wrapper_function(k, 
+                       maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
+                       ndx, bdeg, lambda.init)
+
+plot(ll$covariates_plot)
+
+plot(ll$err_plot)
+
+ll$err_metrics
+
+
+(ll$covariates_plot | ll$err_plot) + 
+  plot_layout(widths = c(2, 1)) +
+  plot_annotation(
+    title = "Australian electricity demand",
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+
+```
+
+## Summary Table
+
+```{r Summary Table}
+
+# Obtain the results for each fold
+Results = ll$Results
+#Initialize the table
+australia_table <- data.frame(
+  Fold = 1:length(Results),
+  MSE_Wood = NA,
+  MAE_Wood = NA,
+  EDF_Wood = NA,
+  SIze_Wood = NA,
+  BIC_Wood = NA,
+  MSE_Psp = NA,
+  MAE_Psp = NA,
+  EDF_Psp = NA,
+  BIC_Psp = NA,
+  Size_Psp = NA
+)
+
+# Fill the table from the Results list
+for (fold in seq_along(Results)) {
+  res <- Results[[fold]]
+  australia_table[fold, -1] <- unlist(res[setdiff(names(res), c("K_sel_Wood", "Grid_Wood", "Grid_Psp", "AIC_Wood", "AIC_Psp"))])
+}
+
+# Format
+names(australia_table) = c("Fold", 
+  "MSE AKSSAM", "MAE AKSSAM", "EDF/SIze AKSSAM","Size AKSSAM", "BIC AKSSAM", 
+  "MSE Psp", "MAE Psp", "EDF Psp", "Size Psp", "BIC Psp")
+australia_table[,5] <- australia_table[,10]
+australia_table[,10] <- australia_table[,11]
+australia_table[,11] <- australia_table[,5]
+australia_table[,5] <- NULL
+
+# Display the Table
+knitr::kable(australia_table, format = "html", caption = "Mean Results for the Australian electricity demand dataset")
+
+
+# LaTex code
+xtable::xtable(australia_table, digits = 6)
+```
+
+## Export the Images
+
+```{r}
+# Object's name
+obj_name <- "ll"
+obj <- get(obj_name)
+
+
+# Save the Covariates' plot
+path <- paste0("Images/", obj_name, "_Covs.png")
+png(path, width = 1000, height = 500)
+print(obj$covariates_plot)
+dev.off()
+    
+# Save the Error plot
+path <- paste0("Images/", obj_name, "_Errs.png")
+png(path, width = 500, height = 500)
+print(obj$err_plot)
+dev.off()
+
+```
+
