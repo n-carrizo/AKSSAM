@@ -33,6 +33,7 @@ library(splines2)
 library(tidyverse)
 library(aspline)
 library(xtable)
+library(cowplot)
 
 # Our functions
 source("../Functions.R")
@@ -411,42 +412,103 @@ error_plot_1 <- function(Results){
   MAE_Wood <- sapply(Results, function(x) x$MAE_Wood)
   EDF_Wood <- sapply(Results, function(x) x$EDF_Wood)
   Size_Wood <- sapply(Results, function(x) x$Size_Wood)
+  BIC_Wood <- sapply(Results, function(x) x$BIC_Wood)
   
   MSE_PSp  <- sapply(Results, function(x) x$MSE_Psp)
   MAE_PSp  <- sapply(Results, function(x) x$MAE_Psp)
   EDF_Psp <- sapply(Results, function(x) x$EDF_Psp)
   Size_Psp <- sapply(Results, function(x) x$Size_Psp)
+  BIC_Psp <- sapply(Results, function(x) x$BIC_Psp)
   
   df <- data.frame(
-    Value = c(MSE_Wood, MSE_PSp, MAE_Wood, MAE_PSp, EDF_Wood, EDF_Psp, Size_Wood, Size_Psp),
-    Metric = rep(c("MSE", "MSE", "MAE", "MAE", "EDF", "EDF", "Basis Size", "Basis Size"), each = length(Results)),
-    Method = rep(c(rep("AKSSAM", length(Results)), rep("P-Splines", length(Results))), times = 4)
+    Value = c(MSE_Wood, MSE_PSp, MAE_Wood, MAE_PSp, BIC_Wood, BIC_Psp, EDF_Wood, EDF_Psp, Size_Wood, Size_Psp),
+    Metric = rep(c("MSE", "MSE", "MAE", "MAE", "BIC", "BIC", "EDF", "EDF", "Basis Size", "Basis Size"), each = length(Results)),
+    Method = rep(c(rep("AKSSAM", length(Results)), rep("P-Splines", length(Results))), times = 5)
   )
-  df$Metric <- factor(df$Metric, levels = c("MSE", "MAE", "EDF", "Basis Size"))
+  df$Metric <- factor(df$Metric, levels = c("MSE", "MAE", "BIC", "EDF", "Basis Size"))
   
-  ## Boxplot of the error metrics
-  Performance_plot <- ggplot(df, aes(x = Method, y = Value, color = Method)) +
-    geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
-    labs(title = "Performance Metrics",
-         x = "Metric", y = "Value") +
-    scale_color_manual(
-      values = c("AKSSAM" = "#FF3030", "P-Splines" = "#1C86EE"),
-      labels = c("AKSSAM", "P-Splines"),
-      name = "Algorithm"
-    ) +
-    facet_wrap(~ Metric, scales = "free_y") + 
-    theme_light(base_size = 14) +
-    theme(
-      legend.position = "bottom",
-      legend.direction = "horizontal",
-      legend.title = element_text(size = 12),
-      legend.text = element_text(size = 10)
-    )
+  # Boxplot
+  strip_theme <- theme(
+      strip.background = element_rect(fill = "grey90", color = "grey60"),
+      strip.text = element_text(face = "bold"),
+      panel.border = element_rect(color = "grey80", fill = NA)
+  )
+  
+  plots <- lapply(levels(df$Metric), function(metric_name) {
+    if (metric_name!="EDF"){
+      ggplot(filter(df, Metric == metric_name), aes(x = Method, y = Value, color = Method)) +
+          geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
+          labs(x = NULL, y = NULL) +
+          ggtitle(metric_name) +
+          scale_color_manual(
+              values = c("AKSSAM" = "#FF3030", "P-Splines" = "#1C86EE"),
+              name = "Algorithm"
+          ) +
+          theme_light(base_size = 14) +
+          strip_theme +
+          theme(
+              legend.position = "none",
+              plot.title = element_text(hjust = 0.5, size = 12),
+              panel.border = element_rect(color = "grey80", fill = NA)
+          )
+    } else{
+      ggplot(filter(df, Metric == metric_name), aes(x = Method, y = Value, color = Method)) +
+          geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
+          labs(x = NULL, y = NULL) +
+          ggtitle(metric_name) +
+          scale_color_manual(
+              values = c("AKSSAM" = "#FF3030", "P-Splines" = "#1C86EE"),
+              name = "Algorithm"
+          ) +
+          theme_light(base_size = 14) +
+          strip_theme +
+          theme(
+            legend.position = "bottom",
+            legend.direction = "horizontal",
+            legend.title = element_text(size = 12),
+            legend.text = element_text(size = 10),
+            plot.title = element_text(hjust = 0.5, size = 12),
+            panel.border = element_rect(color = "grey80", fill = NA)
+          )
+    }
+  })
+  
+  legend_plot <- ggplot(df, aes(x = Method, y = Value, color = Method)) +
+      geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
+      scale_color_manual(
+          values = c("AKSSAM" = "#FF3030", "P-Splines" = "#1C86EE"),
+          name = "Algorithm"
+      ) +
+      theme_light(base_size = 14) +
+      theme(
+          legend.position = "bottom",
+          legend.box.margin = margin(0,0,0,0),
+          legend.margin = margin(0,0,0,0)
+      )
+  
+  legend <- cowplot::get_legend(legend_plot)
+  
+  top_row <- plot_spacer() + plots[[1]] + plots[[2]] + plot_spacer()
+  top_row <- top_row + plot_layout(ncol = 4, widths = c(1, 2, 2, 1))
+  
+  bottom_row <- plots[[3]] + plots[[4]] + plots[[5]]
+  bottom_row <- bottom_row + plot_layout(ncol = 3)
+  
+  legend_row <- plot_spacer() + wrap_elements(legend) + plot_spacer()
+  legend_row <- legend_row + plot_layout(ncol = 3, widths = c(1, 4, 1))
+  
+  final_plot <- (top_row / bottom_row / legend_row) +
+      plot_layout(heights = c(1, 1, 0)) +
+      plot_annotation(
+          title = "Performance Metrics",
+          theme = theme(plot.title = element_text(size = 16, face = "bold"))
+      )
   
   ## Output
-  return(Performance_plot)
+  return(final_plot)
 }
 ```
+
 
 
 ```{r simulation_wrapper_1}
@@ -512,7 +574,7 @@ simulation_wrapper_1 <- function(N, n, SNR, m, family, ndx, bdeg, lambda.init,
   covariates_plot <- covariates_plot_1(Results, grid, N, m, n, SNR)
   
   ## Error metrics plot and values
-  err_plot <- error_plot_1(Results)
+  err_plot <- suppressWarnings(error_plot_1(Results))
   err_metrics = list(mean_MSE_Wood = NA, sd_MSE_Wood = NA, 
                      mean_MAE_Wood = NA, sd_MAE_Wood = NA, 
                      mean_AIC_Wood = NA, sd_AIC_Wood = NA, 
@@ -615,7 +677,7 @@ ll_Gaussian_n1S1$covariates_plot
 ll_Gaussian_n1S1$err_plot
 
 (ll_Gaussian_n1S1$covariates_plot | ll_Gaussian_n1S1$err_plot) + 
-  plot_layout(widths = c(2, 1)) +
+  plot_layout(widths = c(3, 2)) +
   plot_annotation(
     title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
     theme = theme(plot.title = element_text(size = 16, face = "bold"))
@@ -663,7 +725,7 @@ ll_Gaussian_n1S2$covariates_plot
 ll_Gaussian_n1S2$err_plot
 
 (ll_Gaussian_n1S2$covariates_plot | ll_Gaussian_n1S2$err_plot) + 
-  plot_layout(widths = c(2, 1)) +
+  plot_layout(widths = c(3, 2)) +
   plot_annotation(
     title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
     theme = theme(plot.title = element_text(size = 16, face = "bold"))
@@ -711,7 +773,7 @@ ll_Gaussian_n1S3$covariates_plot
 ll_Gaussian_n1S3$err_plot
 
 (ll_Gaussian_n1S3$covariates_plot | ll_Gaussian_n1S3$err_plot) + 
-  plot_layout(widths = c(2, 1)) +
+  plot_layout(widths = c(3, 2)) +
   plot_annotation(
     title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
     theme = theme(plot.title = element_text(size = 16, face = "bold"))
@@ -761,7 +823,7 @@ ll_Gaussian_n2S1$covariates_plot
 ll_Gaussian_n2S1$err_plot
 
 (ll_Gaussian_n2S1$covariates_plot | ll_Gaussian_n2S1$err_plot) + 
-  plot_layout(widths = c(2, 1)) +
+  plot_layout(widths = c(3, 2)) +
   plot_annotation(
     title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
     theme = theme(plot.title = element_text(size = 16, face = "bold"))
@@ -809,7 +871,7 @@ ll_Gaussian_n2S2$covariates_plot
 ll_Gaussian_n2S2$err_plot
 
 (ll_Gaussian_n2S2$covariates_plot | ll_Gaussian_n2S2$err_plot) + 
-  plot_layout(widths = c(2, 1)) +
+  plot_layout(widths = c(3, 2)) +
   plot_annotation(
     title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
     theme = theme(plot.title = element_text(size = 16, face = "bold"))
@@ -857,7 +919,7 @@ ll_Gaussian_n2S3$covariates_plot
 ll_Gaussian_n2S3$err_plot
 
 (ll_Gaussian_n2S3$covariates_plot | ll_Gaussian_n2S3$err_plot) + 
-  plot_layout(widths = c(2, 1)) +
+  plot_layout(widths = c(3, 2)) +
   plot_annotation(
     title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
     theme = theme(plot.title = element_text(size = 16, face = "bold"))
@@ -908,7 +970,7 @@ ll_Gaussian_n3S1$covariates_plot
 ll_Gaussian_n3S1$err_plot
 
 (ll_Gaussian_n3S1$covariates_plot | ll_Gaussian_n3S1$err_plot) + 
-  plot_layout(widths = c(2, 1)) +
+  plot_layout(widths = c(3, 2)) +
   plot_annotation(
     title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
     theme = theme(plot.title = element_text(size = 16, face = "bold"))
@@ -956,7 +1018,7 @@ ll_Gaussian_n3S2$covariates_plot
 ll_Gaussian_n3S2$err_plot
 
 (ll_Gaussian_n3S2$covariates_plot | ll_Gaussian_n3S2$err_plot) + 
-  plot_layout(widths = c(2, 1)) +
+  plot_layout(widths = c(3, 2)) +
   plot_annotation(
     title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
     theme = theme(plot.title = element_text(size = 16, face = "bold"))
@@ -1004,7 +1066,7 @@ ll_Gaussian_n3S3$covariates_plot
 ll_Gaussian_n3S3$err_plot
 
 (ll_Gaussian_n3S3$covariates_plot | ll_Gaussian_n3S3$err_plot) + 
-  plot_layout(widths = c(2, 1)) +
+  plot_layout(widths = c(3, 2)) +
   plot_annotation(
     title = paste0("Gaussian Simulation, n = ", n, " SNR = ", SNR),
     theme = theme(plot.title = element_text(size = 16, face = "bold"))
@@ -1373,41 +1435,100 @@ error_plot_2 <- function(Results){
   MAE_Wood <- sapply(Results, function(x) x$MAE_Wood)
   EDF_Wood <- sapply(Results, function(x) x$EDF_Wood)
   Size_Wood <- sapply(Results, function(x) x$Size_Wood)
+  BIC_Wood <- sapply(Results, function(x) x$BIC_Wood)
   
   MSE_PSp  <- sapply(Results, function(x) x$MSE_Psp)
   MAE_PSp  <- sapply(Results, function(x) x$MAE_Psp)
   EDF_Psp <- sapply(Results, function(x) x$EDF_Psp)
   Size_Psp <- sapply(Results, function(x) x$Size_Psp)
+  BIC_Psp <- sapply(Results, function(x) x$BIC_Psp)
   
   df <- data.frame(
-    Value = c(MSE_Wood, MSE_PSp, MAE_Wood, MAE_PSp, EDF_Wood, EDF_Psp, Size_Wood, Size_Psp),
-    Metric = rep(c("MSE", "MSE", "MAE", "MAE", "EDF", "EDF", "Basis Size", "Basis Size"), each = length(Results)),
-    Method = rep(c(rep("AKSSAM", length(Results)), rep("P-Splines", length(Results))), times = 4)
+    Value = c(MSE_Wood, MSE_PSp, MAE_Wood, MAE_PSp, BIC_Wood, BIC_Psp, EDF_Wood, EDF_Psp, Size_Wood, Size_Psp),
+    Metric = rep(c("MSE", "MSE", "MAE", "MAE", "BIC", "BIC", "EDF", "EDF", "Basis Size", "Basis Size"), each = length(Results)),
+    Method = rep(c(rep("AKSSAM", length(Results)), rep("P-Splines", length(Results))), times = 5)
   )
-  df$Metric <- factor(df$Metric, levels = c("MSE", "MAE", "EDF", "Basis Size"))
+  df$Metric <- factor(df$Metric, levels = c("MSE", "MAE", "BIC", "EDF", "Basis Size"))
   
-  ## Boxplot of the error metrics
-  Performance_plot <- ggplot(df, aes(x = Method, y = Value, color = Method)) +
-    geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
-    labs(title = "Performance Metrics",
-         x = "Metric", y = "Value") +
-    scale_color_manual(
-      values = c("AKSSAM" = "#FF3030", "P-Splines" = "#1C86EE"),
-      labels = c("AKSSAM", "P-Splines"),
-      name = "Algorithm"
-    ) +
-    facet_wrap(~ Metric, scales = "free_y") + 
-    theme_light(base_size = 14) +
-    theme(
-      legend.position = "bottom",
-      legend.direction = "horizontal",
-      legend.title = element_text(size = 12),
-      legend.text = element_text(size = 10)
-    )
+  # Boxplot
+  strip_theme <- theme(
+      strip.background = element_rect(fill = "grey90", color = "grey60"),
+      strip.text = element_text(face = "bold"),
+      panel.border = element_rect(color = "grey80", fill = NA)
+  )
   
+  plots <- lapply(levels(df$Metric), function(metric_name) {
+    if (metric_name!="EDF"){
+      ggplot(filter(df, Metric == metric_name), aes(x = Method, y = Value, color = Method)) +
+          geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
+          labs(x = NULL, y = NULL) +
+          ggtitle(metric_name) +
+          scale_color_manual(
+              values = c("AKSSAM" = "#FF3030", "P-Splines" = "#1C86EE"),
+              name = "Algorithm"
+          ) +
+          theme_light(base_size = 14) +
+          strip_theme +
+          theme(
+              legend.position = "none",
+              plot.title = element_text(hjust = 0.5, size = 12),
+              panel.border = element_rect(color = "grey80", fill = NA)
+          )
+    } else{
+      ggplot(filter(df, Metric == metric_name), aes(x = Method, y = Value, color = Method)) +
+          geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
+          labs(x = NULL, y = NULL) +
+          ggtitle(metric_name) +
+          scale_color_manual(
+              values = c("AKSSAM" = "#FF3030", "P-Splines" = "#1C86EE"),
+              name = "Algorithm"
+          ) +
+          theme_light(base_size = 14) +
+          strip_theme +
+          theme(
+            legend.position = "bottom",
+            legend.direction = "horizontal",
+            legend.title = element_text(size = 12),
+            legend.text = element_text(size = 10),
+            plot.title = element_text(hjust = 0.5, size = 12),
+            panel.border = element_rect(color = "grey80", fill = NA)
+          )
+    }
+  })
+  
+  legend_plot <- ggplot(df, aes(x = Method, y = Value, color = Method)) +
+      geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
+      scale_color_manual(
+          values = c("AKSSAM" = "#FF3030", "P-Splines" = "#1C86EE"),
+          name = "Algorithm"
+      ) +
+      theme_light(base_size = 14) +
+      theme(
+          legend.position = "bottom",
+          legend.box.margin = margin(0,0,0,0),
+          legend.margin = margin(0,0,0,0)
+      )
+  
+  legend <- cowplot::get_legend(legend_plot)
+  
+  top_row <- plot_spacer() + plots[[1]] + plots[[2]] + plot_spacer()
+  top_row <- top_row + plot_layout(ncol = 4, widths = c(1, 2, 2, 1))
+  
+  bottom_row <- plots[[3]] + plots[[4]] + plots[[5]]
+  bottom_row <- bottom_row + plot_layout(ncol = 3)
+  
+  legend_row <- plot_spacer() + wrap_elements(legend) + plot_spacer()
+  legend_row <- legend_row + plot_layout(ncol = 3, widths = c(1, 4, 1))
+  
+  final_plot <- (top_row / bottom_row / legend_row) +
+      plot_layout(heights = c(1, 1, 0)) +
+      plot_annotation(
+          title = "Performance Metrics",
+          theme = theme(plot.title = element_text(size = 16, face = "bold"))
+      )
   
   ## Output
-  return(Performance_plot)
+  return(final_plot)
 }
 ```
 
@@ -1573,7 +1694,7 @@ ll_Poisson_n1$err_plot
 wrap_plots(
   ll_Poisson_n1$covariates_plot, 
   ll_Poisson_n1$err_plot, 
-  widths = c(2, 1)
+  widths = c(3, 2)
 ) + 
   plot_annotation(
     title = paste0("Poisson Simulation, n = ", n),
@@ -1623,7 +1744,7 @@ ll_Poisson_n2$err_plot
 wrap_plots(
   ll_Poisson_n2$covariates_plot, 
   ll_Poisson_n2$err_plot, 
-  widths = c(2, 1)
+  widths = c(3, 2)
 ) + 
   plot_annotation(
     title = paste0("Poisson Simulation, n = ", n),
@@ -1673,7 +1794,7 @@ ll_Poisson_n3$err_plot
 wrap_plots(
   ll_Poisson_n3$covariates_plot, 
   ll_Poisson_n3$err_plot, 
-  widths = c(2, 1)
+  widths = c(3, 2)
 ) + 
   plot_annotation(
     title = paste0("Poisson Simulation, n = ", n),
