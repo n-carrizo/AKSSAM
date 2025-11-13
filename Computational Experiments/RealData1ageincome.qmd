@@ -1,0 +1,758 @@
+---
+title: "AKKSAM: Real Data 1 - AUDem"
+author: "Nicolas Carrizosa Arias"
+format: 
+  html:
+    toc: true        
+    toc-depth: 4     
+    toc-location: left  
+    self-contained: true
+---
+
+# Functions
+
+## Libraries
+
+```{r library, warning = FALSE, message = FALSE}
+# Required Packages
+packages <- c(
+  "qgam", "caret", "corpcor", "corrplot", "dplyr", "ggplot2", "grid",
+  "gridExtra", "gridGraphics", "MASS", "Matrix", "patchwork", "pROC",
+  "pracma", "splines", "splines2", "tidyverse", "aspline", "xtable",
+  "cowplot", "scales", "mgcv", "pso"
+)
+
+# Install and/or load the packages
+for (pkg in packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
+  library(pkg, character.only = TRUE)
+}
+```
+
+## AKKSAM
+
+```{r AKSSAM, warning = FALSE, message=FALSE}
+# AKSSAM
+source("Required_Scripts/AKSSAM.R")
+```
+
+## OKPSO
+
+```{r PSO, warning = FALSE, message=FALSE}
+# PSO
+source("Required_Scripts/ok_gam.R")
+```
+
+
+# Data
+
+The considered dataset is `age.income` from the package `SemiPar`: age (in years) vs log(income) for 205 observations
+
+```{r}
+age.income <- read.table("Required_Scripts/ageincome.txt", header = TRUE)
+y <- age.income$log.income %>% scale(center = TRUE)
+x <- age.income$age %>% scale(center = TRUE, scale = TRUE)
+
+data <- data.frame(x = x, y = y)
+
+plot(x, y)
+```
+
+We aim at modelling the `dem` variable through the `temp` variable, in which the covariate has been scaled to $[0,1]$ and the response centered.
+
+
+# Pipeline
+
+## K-Fold function
+
+```{r K-fold function}
+kfold <- function(X, y, K){
+  
+  # Nº of instances and covariates
+  n = length(y)
+  m = dim(X)[2]
+  
+  # Identify the max and min covariates values' indexes
+  ext_indexes = rep(0, 2*m) # Max of 2*m indexes
+  grid <- matrix(0, ncol = m, nrow = 100) # Plotting grid
+  for (t in 1:m){
+    max_val = which.max(X[,t])
+    min_val = which.min(X[,t])
+    ext_indexes[2*(t-1) + 1] = max_val # Index for min obs of covariate t
+    ext_indexes[2*(t-1) + 2] = min_val # Index for max obs of covariate t
+    
+    grid[,t] = seq(X[min_val,t], X[max_val,t], length.out = 100) # Grid for i-th covariate
+  }
+  # Eliminate repeated values and possible 0's
+  ext_indexes = unique(ext_indexes[ext_indexes != 0])
+  
+  # Create the folds
+  folds <- sample(rep(1:K, length.out = n)) 
+  
+  # Create a folds matrix which will have 1's if the data is included in the 
+  # training sample for each fold (column)
+  folds_matrix <- matrix(0, ncol = K, nrow = n)
+  for (i in 1:K){
+    # Add the extreme values
+    training_idx <- unique(c(which(folds != i), ext_indexes)) 
+    #Inidcate with 1 the training obs. indexes
+    folds_matrix[training_idx, i] = 1
+  }
+  
+  
+  # Output
+  return(list(folds = folds_matrix, # Folds matrix
+              grid = grid           # Plotting grid
+              ))
+}
+```
+
+
+## Fitting function
+
+OJO los nodos estásn puestos en ndx + bdeg + 1 para que, cuando no se dé ninguna seleccion de nodos, se tenga el mismo nº de elementos en la base para cada uno de los métodos
+
+```{r}
+fitting_function = function(X_train, X_test, y_train, FF_test,
+                            ndx, bdeg, lambda.init,
+                            maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
+                            grid){
+  
+  # Nº of instances and covariates
+  n = length(y_train)
+  m = dim(X_train)[2]
+  family = "gaussian"
+  
+  ## AKSSAM -------------------------------------------------------------------- 
+  # Train the model
+  K = vector('list', m)
+  for (t in 1:m){
+    K[[t]] = my.knots(X_train[,t], min(X_train[,t]), max(X_train[,t]), ndx[t], bdeg[t])
+  }
+  time1 <- system.time({
+    model1 <- AKSSAM(X_train, y_train, family, lambda.init, ndx, bdeg, 
+                     maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, 
+                      epsilon)
+  })[3] %>% unname
+  K_sel1 <- model1$K_sel
+  alpha <- as.vector(model1$alpha.new)
+  
+  # Test
+  Design_list = vector("list", m + 1)
+  Design_list[[1]] = matrix(1, length(FF_test), 1) 
+  for (t in 1:m){Design_list[[t+1]] = my.bbase4(X_test[,t], K_sel1[[t]], bdeg[t])}
+  B_star <- do.call(cbind, Design_list) 
+  predictions1 <- B_star %*% alpha
+  
+  # Grid
+  Grid_list = vector("list", m)
+  grid_basis_length = rep(0,m)
+  for (t in 1:m){     
+    Grid_list[[t]] = my.bbase4(grid[,t], K_sel1[[t]], bdeg[t])
+    grid_basis_length[t] = dim(Grid_list[[t]])[2]
+  }
+  grid1 <- grid
+  for (t in 1:m){
+    B = Grid_list[[t]]
+    if (t == 1){
+      index_0 = 2
+      index_1 = 1 + grid_basis_length[1]
+    }else{
+      index_0 = 2 + sum(grid_basis_length[1:(t-1)])
+      index_1 = index_0 + grid_basis_length[t] - 1
+    }
+    grid1[ ,t] <- B %*% alpha[index_0:index_1]
+  }
+  
+  # Metrics
+  MSE1 <- mean((FF_test - predictions1)^2)
+  MAE1 <- mean(abs(FF_test - predictions1))
+  EDF1 <- Size1 <- ncol(B_star)
+  
+  Old_Design_list = vector("list", m + 1)
+  Old_Design_list[[1]] = matrix(1, length(y_train), 1)
+  for (t in 1:m){Old_Design_list[[t+1]] = my.bbase4(X_train[,t], K_sel1[[t]], bdeg[t])}
+  B_star_old <- do.call(cbind, Old_Design_list)
+  residuals_train <- (y_train - B_star_old %*% alpha)
+  sigma2_hat <- mean(residuals_train^2)
+  loglik <- -0.5 * n * log(2 * pi * sigma2_hat) - 0.5 * sum(residuals_train^2) / sigma2_hat
+  AIC1 <- -2 * loglik + 2 * EDF1
+  BIC1 <- -2 * loglik + log(n) * EDF1
+  
+  
+  ## PSO algorithm   -----------------------------------------------------------
+  # Train the model
+  data <- data.frame(y = y_train, as.data.frame(X_train))
+  terms <- paste0("s(V", 1:m, ", bs = 'cr', k = ", ndx + bdeg + 1, ")")             
+  formula <- as.formula(paste("y ~", paste(terms, collapse = " + ")))
+  initial_gam_model <- mgcv::gam(formula, data = data)
+  time2 <- system.time({
+    result <- suppressMessages(
+      fit_gam_pso(
+        gam_model = initial_gam_model,
+        data = data,
+        n_knots = ndx + bdeg + 1,
+        alpha = 1e-07,
+        smoothing_method = "GCV.Cp",
+        max_iterations = 100
+      )
+    )
+  })[3] %>% unname
+  model2 <- result$model
+  K_sel2 <- result$knots$`1`
+  
+  # Test
+  test = as.data.frame(X_test)
+  predictions2 <- as.vector(predict(model2, newdata = test))
+    
+  # Grid
+  grid2 <- predict(model2, newdata = as.data.frame(grid), type = "terms")
+  
+  # Metrics
+  MSE2 <- mean((FF_test - predictions2)^2)
+  MAE2 <- mean(abs(FF_test - predictions2))
+  EDF2 <- sum(model2$edf)
+  Size2 <- length(model2$coefficients)
+  
+  residuals_train <- (y_train - predict(model2))
+  sigma2_hat <- mean(residuals_train^2)
+  loglik <- -0.5 * n * log(2 * pi * sigma2_hat) - 0.5 * sum(residuals_train^2) / sigma2_hat
+  AIC2 <- -2 * loglik + 2 * EDF2
+  BIC2 <- -2 * loglik + log(n) * EDF2
+  
+  
+  ## P-splines   ---------------------------------------------------------------
+  # Train the model
+  terms <- paste0("s(V", 1:m, ", bs = 'ps', k = ", ndx + bdeg + 1, ")")             
+  formula <- as.formula(paste("y ~", paste(terms, collapse = " + ")))
+  time3 <- system.time({
+    model3 <- mgcv::gam(formula, data = data, method = "REML")
+  })[3] %>% unname
+  
+  # Test
+  predictions3 <- as.vector(predict(model3, newdata = test))
+    
+  # Grid
+  grid3 <- predict(model3, newdata = as.data.frame(grid), type = "terms")
+  
+  # Metrics
+  MSE3 <- mean((FF_test - predictions3)^2)
+  MAE3 <- mean(abs(FF_test - predictions3))
+  EDF3 <- sum(model3$edf)
+  Size3 <- length(model3$coefficients)
+  
+  residuals_train <- (y_train - predict(model3))
+  sigma2_hat <- mean(residuals_train^2)
+  loglik <- -0.5 * n * log(2 * pi * sigma2_hat) - 0.5 * sum(residuals_train^2) / sigma2_hat
+  AIC3 <- -2 * loglik + 2 * EDF3
+  BIC3 <- -2 * loglik + log(n) * EDF3
+  
+  
+  ## A-splines   ---------------------------------------------------------------
+  # Train the model
+  k <- ndx + bdeg + 1
+  X_train_vect <- as.vector(X_train)
+  ordering <- order(X_train_vect)
+  X_train_vect_sorted <- X_train_vect[ordering]
+  y_sorted <- y_train[ordering]
+  knots <- seq(min(X_train_vect), max(X_train_vect), length = k + 2)[-c(1, k + 2)]
+  pen <- 10 ^ seq(-4, 4, 0.25)
+  time4 <- system.time({
+    aridge <- suppressWarnings(aspline(X_train_vect_sorted, y_sorted, knots, pen, degree = 3))
+  })[3] %>% unname
+  K_sel4 <- aridge$knots_sel[[which.min(aridge$ebic)]]
+  B_train <- bSpline(X_train_vect, knots = K_sel4, degree = 3, intercept = TRUE)
+  colnames(B_train) <- paste0("bs", seq_len(ncol(B_train)))
+  df_train <- data.frame(y = y_train, B_train)
+  model4 <- lm(y ~ ., data = df_train)
+  
+  # Test
+  X_test_vec  <- as.vector(X_test)
+  B_test <- bSpline(X_test_vec, knots = K_sel4, degree = 3, intercept = TRUE)
+  colnames(B_test) <- colnames(B_train)
+  df_test <- as.data.frame(B_test)
+  predictions4 <- as.vector(predict(model4, newdata = df_test))
+    
+  # Grid
+  B_grid <- bSpline(grid, knots = K_sel4, degree = 3, intercept = TRUE)
+  colnames(B_grid) <- colnames(B_train) 
+  df_grid <- as.data.frame(B_grid)
+  grid4 <- predict(model4, newdata = df_grid) %>% as.matrix
+  
+  # Metrics
+  MSE4 <- mean((FF_test - predictions4)^2)
+  MAE4 <- mean(abs(FF_test - predictions4))
+  EDF4 <- Size4 <- length(model4$coefficients)
+  
+  residuals_train <- (y_train - predict(model4))
+  sigma2_hat <- mean(residuals_train^2)
+  loglik <- -0.5 * n * log(2 * pi * sigma2_hat) - 0.5 * sum(residuals_train^2) / sigma2_hat
+  AIC4 <- -2 * loglik + 2 * EDF4
+  BIC4 <- -2 * loglik + log(n) * EDF4
+  
+  
+  ## Assignment   --------------------------------------------------------------
+  return(list(
+    # AKSSAM algorithm results
+    AKSSAM = list(MSE = MSE1,
+                  MAE = MAE1,
+                  Grid = grid1,
+                  K_sel = K_sel1,
+                  EDF = EDF1,
+                  Size = Size1,
+                  AIC = AIC1,
+                  BIC = BIC1,
+                  Time = time1),
+    # PSO algorithm results
+    PSO = list(MSE = MSE2,
+               MAE = MAE2,
+               Grid = grid2,
+               K_sel = list(K_sel2),
+               EDF = EDF2,
+               Size = Size2,
+               AIC = AIC2,
+               BIC = BIC2,
+               Time = time2),
+    # P-splines algorithm results
+    PSplines = list(MSE = MSE3,
+                    MAE = MAE3,
+                    Grid = grid3,
+                    EDF = EDF3,
+                    Size = Size3,
+                    AIC = AIC3,
+                    BIC = BIC3,
+                    Time = time3),
+    # A-splines algorithm results
+    ASplines = list(MSE = MSE4, 
+                    MAE = MAE4,
+                    Grid = grid4,
+                    K_sel = list(K_sel4),
+                    EDF = EDF4,
+                    Size = Size4,
+                    AIC = AIC4,
+                    BIC = BIC4,
+                    Time = time4)
+              ))
+}
+```
+
+
+## Covariates Plot
+
+```{r}
+covariates_plot <- function(Results, grid, m, k){
+  
+  ## Miscellanea
+  methods <- c('AKSSAM', 'PSO', 'P-splines', 'A-splines')
+  colors <- c("AKSSAM" = "#F8766D", "PSO" = "#7CAE00", "P-splines" = "#00BFC4", "A-splines" = "#C77CFF", "True effect" = "grey60")
+        
+  
+  ## Calculate the mean estimated covariates' effects over the simulations
+  # AKSSAM algorithm
+  Grid_AKSSAM_matrices <- lapply(Results, function(x) x$AKSSAM$Grid)
+  mean_Grid_AKSSAM <- Reduce("+", Grid_AKSSAM_matrices) / k
+  temp <- lapply(Results, function(x) x$AKSSAM$K_sel)
+  K_sel_AKSSAM <- lapply(1:m, function(i){
+    unlist(lapply(1:k, function(t){
+      v <- temp[[t]][[i]]
+      return(v[5:(length(v)-4)])
+    }))
+  })
+  
+  # PSO algorithm
+  Grid_PSO_matrices <- lapply(Results, function(x) x$PSO$Grid)
+  mean_Grid_PSO <- Reduce("+", Grid_PSO_matrices) / k
+  temp <- lapply(Results, function(x) x$PSO$K_sel) 
+  K_sel_PSO <- lapply(1:m, function(i){
+    unlist(lapply(1:k, function(t){
+      v <- temp[[t]][[i]]
+      return(v[2:(length(v)-1)])
+    }))
+  })
+  
+  # P-Splines
+  Grid_Psp_matrices <- lapply(Results, function(x) x$PSplines$Grid)
+  mean_Grid_Psp <- Reduce("+", Grid_Psp_matrices) / k
+  
+  # A-Splines
+  Grid_Asp_matrices <- lapply(Results, function(x) x$ASplines$Grid)
+  mean_Grid_Asp <- Reduce("+", Grid_Asp_matrices) / k
+  temp <- lapply(Results, function(x) x$ASplines$K_sel)
+  K_sel_Asp <- lapply(1:m, function(i){
+    unlist(lapply(1:k, function(t) temp[[t]][[i]]))
+  })
+  
+  # Combined grids
+  mean_grids <- list(
+    "AKSSAM" = mean_Grid_AKSSAM,
+    "PSO" = mean_Grid_PSO,
+    "P-splines" = mean_Grid_Psp,
+    "A-splines" = mean_Grid_Asp
+  )
+
+  # True effect
+  X <- data$x %>% as.matrix
+  y <- data$y
+   true_df <- data.frame(
+    x = X,
+    y = y,            
+    Method = "True effect"
+  )
+  
+  ## Marginalized covariates' effects
+  plot_list <- vector('list', m)
+  plot_list <- lapply(1:m, function(t) {
+    
+    
+    plot_df <- do.call(rbind, lapply(methods, function(method) {
+      data.frame(
+        x = grid[, t],
+        y = mean_grids[[method]][, t],
+        Method = method
+      )
+    }))
+    plot_df <- rbind(plot_df, true_df)
+    plot_df$Method <- factor(plot_df$Method,
+                         levels = c("P-splines", "A-splines", "PSO", "AKSSAM", "True effect"))
+    o <- order(X[, t])
+
+    rug_df_AKSSAM <- data.frame(x = K_sel_AKSSAM[[t]])
+    rug_df_PSO <- data.frame(x = K_sel_PSO[[t]])
+    rug_df_Asp <- data.frame(x = K_sel_Asp[[t]])
+    
+    
+    y_range <- range(plot_df$y, na.rm = TRUE)
+    y_min <- y_range[1]
+    y_max <- y_range[2]
+    y_base <- y_min - 0.4 * (y_max - y_min)
+    dy <- (y_max - y_min) * 0.07
+    
+    rug_df_AKSSAM$ymin <- y_base + 2*dy
+    rug_df_AKSSAM$ymax <- y_base + 3*dy
+    
+    rug_df_PSO$ymin <- y_base
+    rug_df_PSO$ymax <- y_base + dy
+    
+    rug_df_Asp$ymin <- y_base + dy
+    rug_df_Asp$ymax <- y_base + 2*dy
+    
+   plot <- ggplot(plot_df, aes(x = x, y = y, color = Method)) +
+    geom_point(size = 2, alpha = 0.6, data = subset(plot_df, Method == "True effect")) +
+    geom_line(linewidth = 1.1, alpha = 0.8, data = subset(plot_df, Method != "True effect")) +
+    geom_segment(data = rug_df_AKSSAM,
+                 aes(x = x, xend = x, y = ymin, yend = ymax),
+                 color = "#F8766D", linewidth = 2, alpha = 2/k) +
+    geom_segment(data = rug_df_PSO,
+                 aes(x = x, xend = x, y = ymin, yend = ymax),
+                 color = "#7CAE00", linewidth = 2, alpha = 2/k) +
+    geom_segment(data = rug_df_Asp,
+                 aes(x = x, xend = x, y = ymin, yend = ymax),
+                 color = "#C77CFF", linewidth = 2, alpha = 2/k) +
+    scale_color_manual(values = colors) +
+    theme_minimal() +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+    labs(color = 'Curve') +
+    theme_light() + 
+    theme(
+        legend.position = "bottom",
+        axis.title = element_blank(),
+        panel.grid.minor = element_blank()
+    )
+
+      return(plot)
+  })
+  
+  
+  ## Combine the plots
+  combined <- wrap_plots(plot_list, nrow = 1, guides = "collect") +
+  plot_annotation(
+    title = paste0("age.income dataset, ", k, "-fold"),
+    theme = theme(
+      plot.title = element_text(size = 15, face = "bold"),
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.background = element_rect(fill = alpha("white", 0.7), color = NA)
+    )
+  )
+  
+  ## Output
+  return(combined)
+}
+```
+
+
+## Error Plot
+
+```{r}
+error_plot <- function(Results){
+  
+  methods <- c("AKSSAM", "PSO", "PSplines", "ASplines")
+  metrics <- c("MSE", "MAE", "EDF", "Size", "Time", "BIC")
+  metric_labels <- c("MSE", "MAE", "EDF", "Basis Size", "Time", "BIC")
+  
+  all_data <- list()
+  for (method in methods) {
+    for (metric in metrics) {
+      values <- sapply(Results, function(x) x[[method]][[metric]])
+      temp_df <- data.frame(
+        Value = values,
+        Metric = metric,
+        Method = method
+      )
+      all_data[[paste0(method, "_", metric)]] <- temp_df
+    }
+  }
+  df <- bind_rows(all_data)
+  df$Metric <- recode_factor(df$Metric,
+    MSE = "MSE",
+    MAE = "MAE",
+    EDF = "EDF",
+    Size = "Basis Size",
+    Time = "Time",
+    BIC = "BIC"
+  )
+  df$Value <- ifelse(df$Metric == "Time", log10(df$Value), df$Value)
+  df$Metric <- recode_factor(df$Metric,
+    MSE = "MSE",
+    MAE = "MAE",
+    EDF = "EDF",
+    Size = "Basis Size",
+    Time = "log10(Time)",
+    BIC = "BIC"
+  )
+  metric_labels <- c("MSE", "MAE", "log10(Time)", "EDF", "Basis Size", "BIC")
+  df$Metric <- factor(df$Metric, levels = metric_labels)
+  
+  df$Method <- recode(df$Method,
+    "PSplines" = "P-splines",
+    "ASplines" = "A-splines"
+  )
+  method_colors <- c(
+    "AKSSAM"   = "#F8766D",
+    "PSO"      = "#7CAE00",
+    "P-splines" = "#00BFC4",
+    "A-splines" = "#C77CFF"
+  )
+  method_linetypes <- c(
+    "AKSSAM"    = "solid",
+    "PSO"       = "dashed",
+    "P-splines" = "dotted",
+    "A-splines" = "twodash"
+  )
+  
+  # Boxplot of all performance metrics
+  Performance_plot <- ggplot(df, aes(x = Method, y = Value, color = Method, linetype = Method)) +
+    geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
+    facet_wrap(~ Metric, scales = "free_y") +
+    scale_color_manual(values = method_colors, 
+                       name = "Algorithm",
+                       labels = c("AKSSAM", "PSO", "P-splines", "A-splines")) +
+    scale_linetype_manual(values = method_linetypes,
+                          name = "Algorithm",
+                          labels = c("AKSSAM", "PSO", "P-splines", "A-splines")) +
+    labs(title = "Performance Metrics",
+         x = "Method", y = "Value") +
+    theme_light(base_size = 14) +
+    theme(
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.title = element_text(size = 12),
+      legend.text = element_text(size = 10),
+      axis.text.x = element_text(size = 8),
+    )
+
+  
+  ## Output
+  return(Performance_plot)
+}
+```
+
+
+## Wrapper
+
+```{r}
+wrapper_function = function(k, 
+                            maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
+                            ndx, bdeg, lambda.init){
+  
+  # Set seed for reproducibility
+  set.seed(123)
+  m <- 1
+  
+  # Load the dataset
+  X <<- data$x %>% as.matrix
+  y <<- data$y
+  
+  # List which contains the metrics for each simulation
+  Results <- rep(list(
+    list(
+      AKSSAM = list(MSE = NA, MAE = NA, Grid = NA, K_sel = vector("list", m),
+                    EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA),
+      PSO    = list(MSE = NA, MAE = NA, Grid = NA, K_sel = vector("list", m),
+                    EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA),
+      PSplines = list(MSE = NA, MAE = NA, Grid = NA,
+                      EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA),
+      ASplines = list(MSE = NA, MAE = NA, Grid = NA, K_sel = vector("list", m),
+                      EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA)
+    )
+  ), k)
+  
+  ## Create evaluation grid
+  # grid <- sapply(1:m, function(j) seq(0, 1, length.out = 100)) %>% as.matrix
+  
+  
+  ##  k-fold cross validation
+  ll <- kfold(X, y, k)
+  folds <- ll$folds
+  grid <- ll$grid
+  
+  if (k == 1){
+    # Train/Test equal
+    X_train <- X_test <- X
+    y_train <- FF_test <- y
+      
+    # Fit the algorithms and store the results
+    result <- fitting_function(X_train, X_test, y_train, FF_test,
+                                 ndx, bdeg, lambda.init,
+                                 maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
+                                 grid)
+    Results[[1]] <- result
+  } else {
+    # Fit the model for each split
+    for (i in 1:k){
+      # Obtain the Train/Test split
+      train_idx <- which(folds[,i] == 1)
+      X_train <- X[train_idx,] %>% as.matrix
+      y_train <- y[train_idx]
+      X_test <- X[-train_idx,] %>% as.matrix
+      FF_test <- y[-train_idx]
+        
+      # Fit the models
+      result <- fitting_function(X_train, X_test, y_train, FF_test,
+                                   ndx, bdeg, lambda.init,
+                                   maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
+                                   grid)
+  
+      # Store the result, increase index and restart try_attempts
+      Results[[i]] <- result
+      print(paste('Fold ', i, 'done.'))
+    }
+  }
+
+
+  ## Output
+  return(list(Results= Results, grid = grid))
+  
+}
+```
+
+
+## Processing Function
+
+```{r}
+process_function <- function(Results, grid, k){
+  
+  ## Miscelanea
+  m <- 1
+  # grid <- sapply(1:m, function(j) seq(0, 1, length.out = 100)) %>% as.matrix
+  
+  ## Covariates estimated effect plot 
+  cov_plot <- covariates_plot(Results, grid, m, k)
+  
+  
+  ## Error metrics plot and values
+  err_plot <- error_plot(Results)
+  
+  methods <- c("AKSSAM", "PSO", "PSplines", "ASplines")
+  metrics <- c("MSE", "MAE", "AIC", "BIC", "EDF", "Size", "Time")
+  
+  err_metrics <- list()
+  for (method in methods) {
+    for (metric in metrics) {
+      key_mean <- paste0("mean_", metric, "_", method)
+      key_sd   <- paste0("sd_", metric, "_", method)
+      
+      values <- sapply(Results, function(x) {
+        x[[method]][[metric]]
+      })
+      
+      err_metrics[[key_mean]] <- mean(values, na.rm = TRUE)
+      err_metrics[[key_sd]]   <- sd(values, na.rm = TRUE)
+    }
+  }
+  
+  ## Output
+  return(list(covariates_plot = cov_plot,        # Covariates estimated effect plot 
+              err_plot = err_plot,               # Error metrics plot
+              err_metrics = err_metrics          # Error metrics
+              ))
+}
+```
+
+
+# GAM fit
+
+Due to the low cardinality of the covariate `age`, we restric ourselves to $ndx = 30$.
+
+```{r GAM fit}
+ll <- wrapper_function(k = 5, 
+                       maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
+                       tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, epsilon = 1e-5,
+                       ndx = 30, bdeg = 3, lambda.init = 10)
+Results <- ll$Results
+```
+
+```{r GAM process, eval = FALSE}
+results <- process_function(Results = ll$Results, grid = ll$grid, k = 5)
+results$covariates_plot
+results$err_plot
+```
+
+## Summary Table
+
+### Full Table
+
+```{r Summary Table, eval = FALSE}
+
+# Define algorithms and metrics
+algos <- c("AKSSAM", "PSO", "PSplines", "ASplines")
+metrics <- c("MSE", "MAE", "EDF", "Size", "BIC", "Time")
+
+# Initialize table with NA
+cols <- c("Fold", unlist(lapply(algos, function(a) paste(metrics, a))))
+results_table <- data.frame(matrix(NA, nrow = length(Results), ncol = length(cols)))
+colnames(results_table) <- cols
+results_table$Fold <- seq_along(Results)
+
+# Fill the table
+for (fold in seq_along(Results)) {
+  res <- Results[[fold]]
+  for (algo in algos) {
+    for (metric in metrics) {
+      colname <- paste(metric, algo)
+      results_table[fold, colname] <- res[[algo]][[metric]]
+    }
+  }
+}
+
+# Display in HTML
+knitr::kable(results_table, format = "html",
+             caption = "Mean Results for the AUDem dataset")
+
+# Export to LaTeX
+xtable::xtable(results_table, digits = 6)
+
+```
+
+# Save the RData
+
+```{r Save the data}
+# Checkpoint
+save.image(file = "real_data1.RData")
+```
+
+
+
+
+
+
