@@ -1,5 +1,5 @@
 <div align="center">
-<img src="images/frontpage.png" width="600"/>
+<img src="Images/frontpage.png" width="600"/>
 </div>
 
 # AKSSAM: Automatic Knot Selection in Smooth Additive Models
@@ -30,7 +30,7 @@ The structure of the repository is the following:
 │
 ├── EXAMPLE.qmd                        # Illustrative examples of AKSSAM
 |
-├── /images                            # Miscellaneous folder
+├── /Images                            # Miscellaneous folder
 │
 ├── LICENSE.R                          # License information
 │
