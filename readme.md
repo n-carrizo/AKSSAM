@@ -1,13 +1,13 @@
-<div align="center">
-<img src="Images/frontpage.png" width="600"/>
-</div>
-
 # AKSSAM: Automatic Knot Selection in Smooth Additive Models
 Repository associated with the paper:
 > Carrizosa, N., Durban, M., Guerrero, V. (2025) `Automatic Knot Selection in Smooth Additive Models`. Manuscript to submit for publication.
 
 This repository contains the implementation in `R` of AKSSAM, which is an algorithm designed to perform automatic knot selection in generalized additive models (GAMs).
 Additionally, the scripts and data required to reproduce the computational experiments presented in the article are included.
+
+<div align="center">
+<img src="Images/frontpage.png" width="600"/>
+</div>
 
 The structure of the repository is the following:
 ```
