@@ -219,7 +219,7 @@ construct.penalizations.deriv = function(Design_list, order_diffs, w, j){
 # Output:
 #   - Linear predictor (eta) at convergence
 #                
-IRLS.init = function(X, y, family, maxiter = 50, tol = 1e-5){
+IRLS.init = function(X, y, family, bdeg, maxiter = 50, tol = 1e-5){
   
   ## Correctly store the GLM family 
   family <- match.arg(family, choices = c("poisson", "binomial"))
@@ -406,7 +406,7 @@ Fit.BSplines.Penalized = function(B, y, P, family, maxiter = 50, tol = 1e-5, eta
 #
 # Output:
 #   - A list with the following elements:
-#       * sel       : List containing indicators of selected inner knots for each covariate
+#       * sel       : List containing the L0 estimations for each term in every covariate
 #       * w         : List of updated weights for each covariate
 #       * par.new   : Vector of parameter estimates for the WPSS solution
 #       * converge  : Boolean indicating whether the algorithm converged within the specified tolerance
@@ -454,7 +454,7 @@ adridge <- function(Design_list, basis_length, family, lambda, w, old_sel,
       D <- diff(par_list[[i]], differences = pen_order[i])
       # Weights
       w[[i]] = 1 / (D ^ 2 + epsilon ^ 2)
-      # Selected indexes
+      # L0 estimations
       sel[[i]] = w[[i]] * D ^ 2
     }
     
@@ -472,7 +472,7 @@ adridge <- function(Design_list, basis_length, family, lambda, w, old_sel,
   }
   
   return(list(
-    sel = sel,           # Indicator of knot selection
+    sel = sel,           # L0 estimations
     w = w,               # List of weights
     par.new = par.new,   # Parameters at convergence
     converge = converge, # Boolean indicating if the algorithm converged
@@ -555,7 +555,7 @@ GAM.asplines = function(X, y, ndx, lambda, bdeg, family, maxiter,
   
   # Initialize eta 
   if (is.null(eta_init) && family != "gaussian"){
-    eta = IRLS.init(X = X, y = y, family = family, maxiter = 50, tol = 1e-5)
+    eta = IRLS.init(X = X, y = y, family = family,bdeg = bdeg, maxiter = 50, tol = 1e-5)
   } else{
     eta = eta_init
   }
@@ -628,8 +628,6 @@ GAM.asplines = function(X, y, ndx, lambda, bdeg, family, maxiter,
 #   \text{tr}\left(\left(S_{\lambda} + p^I\right)^{-} S_j \right) - \text{tr}\left(\left(X'X + S_{\lambda} + p^I\right)^{-1} S_j\right) = \text{tr}\left( \left[\left(S_{\lambda} + p^I\right)^{-} - \left(X'X + S_{\lambda} + p^I\right)^{-1}\right] S_j \right).$$
 #   
 #   - In order to avoid numerical errors via the quotient  $$\lambda_j^* = \sigma^2 \frac{\text{tr}((S_{\lambda}+P^I)^{-} S_j) - \text{tr}((\mathbf{X}^\top \mathbf{X} + S_{\lambda}+P^I)^{-1} S_j)}{\hat{\boldsymbol{\beta}}_{\lambda}^\top S_j \hat{\boldsymbol{\beta}}_{\lambda}} \lambda_j,$$ we will truncate the term $\hat{\boldsymbol{\beta}}_{\lambda}^\top S_j \hat{\boldsymbol{\beta}}_{\lambda}$ by `1e-6`.
-# 
-#   - Notice that in the GLM case, the penalization update is $$\lambda_j^* = \phi \frac{\text{tr}((S_{\lambda}+P^I)^{-} S_j) - \text{tr}((\mathbf{X}^\top \Omega \mathbf{X} + S_{\lambda}+P^I)^{-1} S_j)}{\hat{\boldsymbol{\beta}}_{\lambda}^\top S_j \hat{\boldsymbol{\beta}}_{\lambda}} \lambda_j, $$ where $\Omega$ is the diagonal weight matrix at convergence of the IRLS algorithm.
 # 
 #   - We'll add as well `qr.solve` to invert the required matrices to avoid ill-conditioning errors, since those seem to vanish after a few iterations.
 # 
@@ -731,7 +729,7 @@ AKSSAM = function(X, y, family, lambda.init, ndx, bdeg,
   
   # Initialize eta as the seed for the linear predictor
   if (family != "gaussian"){
-    eta = IRLS.init(X, y, family, maxiter3, tol3)
+    eta = IRLS.init(X, y, family, bdeg, maxiter3, tol3)
   } else {
     eta = NULL
   }
@@ -831,11 +829,11 @@ AKSSAM = function(X, y, family, lambda.init, ndx, bdeg,
       D <- diff(par_list[[i]], differences = pen_order[i])
       # Weights
       w[[i]] = 1 / (D ^ 2 + epsilon ^ 2)
-      # Selected indexes
+      # L0 estimations
       sel[[i]] = w[[i]] * D ^ 2
     }
     
-    # Outer loop convergence: Absolute convergence of selected vectors
+    # Outer loop convergence: Absolute convergence of L0 estimations
     sel1 <- unlist(sel)
     old_sel1 <- unlist(old_sel)
     

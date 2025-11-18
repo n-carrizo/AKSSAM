@@ -1,0 +1,284 @@
+---
+title: "AKKSAM: Example"
+author: "Nicolas Carrizosa Arias"
+format: 
+  html:
+    toc: true        
+    toc-depth: 4     
+    toc-location: left  
+    self-contained: true
+---
+
+# Functions
+
+## Libraries
+
+```{r library, warning = FALSE, message = FALSE}
+# Required Packages
+packages <- c(
+  "dplyr", "Matrix", "splines", "corpcor",  # Essential dependencies
+  "ggplot2", "patchwork"                    # Miscellaneous dependencies
+)
+
+# Install and/or load the packages
+for (pkg in packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
+  library(pkg, character.only = TRUE)
+}
+```
+
+## AKKSAM
+
+```{r AKSSAM, warning = FALSE, message=FALSE}
+# AKSSAM
+source("AKSSAM.R")
+```
+
+
+# Univariate Gaussian Response
+
+```{r}
+## Simulate the data
+set.seed(12345)                              # Set seed for reproducibility
+m = 1                                        # Nº of covariates
+n = 500                                      # Nº of instances
+x <- runif(n, 0, 1)                          # Sampled covariate
+X = as.matrix(x)                             
+f = 0.4 * (x + 2*exp(-1*(16*(x-0.5))^2))     # True effect 
+f = f - mean(f)
+FF = as.matrix(f)
+y = f + rnorm(n, 0, 0.05)                    # Response
+
+
+## AKSSAM 
+model = AKSSAM(X = X, y = y, family = "gaussian", 
+               lambda.init = rep(0.1, m), ndx = rep(60, m), bdeg = rep(3, m), 
+               maxiter1 = 100, maxiter2 = 100, maxiter3 = 200, 
+               tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, 
+               epsilon = 1e-5)
+
+
+## Obtain the estimated sets of knots and coefficients
+K_sel = model$K_sel                   # Selected knots
+Design_list = model$New_Design_list   # Design matrices
+alpha = model$alpha.new               # Coefficients
+B_star <- do.call(cbind, Design_list) # Joint design matrix B*
+predictions <- B_star %*% alpha       # Predictions in X
+
+## Make predictions and independent effects in any 
+# Initialize terms
+Design_list = vector("list", m + 1)
+Design_list[[1]] = matrix(1, 100, 1) 
+basis_length = rep(0,m)
+covariate_predictions = vector("list", m)
+bdeg = rep(3, m)
+# Iterate through covariates
+for (t in 1:m){
+  # Build the design matrix with selected knots
+  B = my.bbase4(seq(0,1, length.out = 100), K_sel[[t]], bdeg[t])
+  Design_list[[t+1]] = B
+  basis_length[t] = dim(B)[2]
+  if (t == 1){index_0 = 2; index_1 = 1 + basis_length[1]
+  }else{index_0 = 2 + sum(basis_length[1:(t-1)]); index_1 = index_0 + basis_length[t] - 1}
+  # Effect of the t-th covariate
+  covariate_predictions[[t]] = B %*% alpha[index_0:index_1]
+}
+# Entire prediction
+B_star <- do.call(cbind, Design_list) # Joint design matrix B*
+predictions <- B_star %*% alpha     
+
+
+## Plot the results
+plot_list <- lapply(1:m, function(i) {
+  
+  # Order the X values
+  o <- order(X[, i])
+  
+  # True effect
+  data <- data.frame( 
+    x = X[o, i], 
+    y = y[o]
+  )
+  
+  # Estimated effect
+  predicts <- data.frame( 
+    x = seq(0,1, length.out = 100),
+    pred = covariate_predictions[[i]]
+  )
+  
+  
+  # Plot the data
+  plot <- ggplot() +
+    geom_point(data = data, aes(x, y), shape = 1) +  
+    geom_line(data = predicts, aes(x, pred), linewidth = 1, col = "red") +         
+    geom_point(
+      data = data.frame(x = K_sel[[i]], y = 0),
+      aes(x = x, y = y), 
+      shape = 16, color = "blue"
+    ) +
+    theme(
+      legend.position = "none",                                                   
+      axis.title = element_blank(),                                               
+      panel.grid.minor = element_blank()                                         
+    ) 
+  
+  
+  return(plot)
+})
+
+# Combine the plots
+combined <- wrap_plots(plot_list, nrow = 1, guides = "collect") +
+  plot_annotation(
+    title = "Gaussian Example",
+    theme = theme(
+      plot.title = element_text(size = 15, face = "bold"),
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.background = element_rect(fill = alpha("white", 0.7), color = NA)
+    )
+  )
+
+combined
+```
+
+
+# Multivariate Binomial Response
+
+```{r}
+# Function for data simulation
+simulate.data.binom = function(m, n){
+
+  set.seed(12345)                      # Set seed for reproducibility
+  
+  X = matrix(1, n, m)                  # Initialize the instance mat.
+  FF = matrix(1, n, m)                 # Initialize the func. values mat.
+  f_total = rep(0, n)                  # Linear estimator
+  
+  for (i in 1:m) {
+    x <- runif(n, 0, 1)
+    X[, i] <- scale(x, center = TRUE, scale = FALSE)
+    
+    if (i == 1) {
+      f <- sin(5.5 * pi * x) + 3 * x - 5 * x^2 + cos(10 * pi * x)
+    } else {
+      f <- 2.5* sin(pi^2 * x)
+    }
+    
+    f_centered <- f - mean(f)
+    FF[, i] <- f_centered
+    f_total <- f_total + f_centered
+  }
+  
+  
+  p <- plogis(f_total)                 # Binomial probabilities
+  y <- rbinom(n, 1, p)                 # Response
+
+  
+  list(X = X,
+       y = y,
+       FF = FF)
+}
+```
+
+```{r}
+## Simulate the data
+m = 2                           # Nº of covariates
+n = 1000                        # Nº of instances
+ll = simulate.data.binom(m,n)   # Simulate the data
+X = ll$X                        # Covariate samples
+y = ll$y                        # Objective variable
+FF = ll$FF                      # Real additive terms values 
+rm(ll)                          # Erase the list
+
+
+## AKSSAM 
+model = AKSSAM(X = X, y = y, family = "binomial", 
+               lambda.init = rep(1, m), ndx = rep(30, m), bdeg = rep(3, m), 
+               maxiter1 = 100, maxiter2 = 100, maxiter3 = 200, 
+               tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, 
+               epsilon = 1e-5)
+
+## Obtain the estimated sets of knots and coefficients
+K_sel = model$K_sel                   # Selected knots
+Design_list = model$New_Design_list   # Design matrices
+alpha = model$alpha.new               # Coefficients
+B_star <- do.call(cbind, Design_list) # Joint design matrix B*
+predictions <- B_star %*% alpha       # Predictions in X
+
+## Make predictions and independent effects in any 
+# Initialize terms
+Design_list = vector("list", m + 1)
+Design_list[[1]] = matrix(1, 100, 1) 
+basis_length = rep(0,m)
+covariate_predictions = vector("list", m)
+bdeg = rep(3, m)
+# Iterate through covariates
+for (t in 1:m){
+  # Build the design matrix with selected knots
+  B = my.bbase4(seq(-0.5,0.5, length.out = 100), K_sel[[t]], bdeg[t])
+  Design_list[[t+1]] = B
+  basis_length[t] = dim(B)[2]
+  if (t == 1){index_0 = 2; index_1 = 1 + basis_length[1]
+  }else{index_0 = 2 + sum(basis_length[1:(t-1)]); index_1 = index_0 + basis_length[t] - 1}
+  # Effect of the t-th covariate
+  covariate_predictions[[t]] = B %*% alpha[index_0:index_1]
+}
+# Entire prediction
+B_star <- do.call(cbind, Design_list) # Joint design matrix B*
+predictions <- B_star %*% alpha     
+
+
+## Plot the results
+plot_list <- lapply(1:m, function(i) {
+
+  # Order the X values
+  o <- order(X[, i])
+  
+  # True effect
+  data <- data.frame( 
+    x = X[o, i], 
+    y = FF[o, i]
+  )
+  
+  # Estimated effect
+  predicts <- data.frame( 
+    x = seq(-0.5,0.5, length.out = 100),
+    pred = covariate_predictions[[i]]
+  )
+  
+  
+  # Plot the data
+  plot <- ggplot() +
+    geom_point(data = data, aes(x, y), shape = 1) +  
+    geom_line(data = predicts, aes(x, pred), linewidth = 1, col = "red") +         
+     geom_point(
+        data = data.frame(x = K_sel[[i]], y = 0),
+        aes(x = x, y = y), 
+        shape = 16, color = "blue"
+      ) +
+    theme(
+      legend.position = "none",                                                   
+      axis.title = element_blank(),                                               
+      panel.grid.minor = element_blank()                                         
+    ) +
+    labs(title = paste0('Covariate ', i))
+  
+  
+    return(plot)
+})
+
+# Combine the plots
+combined <- wrap_plots(plot_list, nrow = 1, guides = "collect") +
+  plot_annotation(
+    title = "Binomial Example",
+    theme = theme(
+      plot.title = element_text(size = 15, face = "bold"),
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.background = element_rect(fill = alpha("white", 0.7), color = NA)
+    )
+  )
+
+combined
+```
+

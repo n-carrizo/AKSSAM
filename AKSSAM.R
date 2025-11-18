@@ -219,7 +219,7 @@ construct.penalizations.deriv = function(Design_list, order_diffs, w, j){
 # Output:
 #   - Linear predictor (eta) at convergence
 #                
-IRLS.init = function(X, y, family, maxiter = 50, tol = 1e-5){
+IRLS.init = function(X, y, family, bdeg, maxiter = 50, tol = 1e-5){
   
   ## Correctly store the GLM family 
   family <- match.arg(family, choices = c("poisson", "binomial"))
@@ -555,7 +555,7 @@ GAM.asplines = function(X, y, ndx, lambda, bdeg, family, maxiter,
   
   # Initialize eta 
   if (is.null(eta_init) && family != "gaussian"){
-    eta = IRLS.init(X = X, y = y, family = family, maxiter = 50, tol = 1e-5)
+    eta = IRLS.init(X = X, y = y, family = family,bdeg = bdeg, maxiter = 50, tol = 1e-5)
   } else{
     eta = eta_init
   }
@@ -729,7 +729,7 @@ AKSSAM = function(X, y, family, lambda.init, ndx, bdeg,
   
   # Initialize eta as the seed for the linear predictor
   if (family != "gaussian"){
-    eta = IRLS.init(X, y, family, maxiter3, tol3)
+    eta = IRLS.init(X, y, family, bdeg, maxiter3, tol3)
   } else {
     eta = NULL
   }

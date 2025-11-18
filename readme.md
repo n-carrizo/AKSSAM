@@ -1,3 +1,6 @@
+<div align="center">
+<img src="images/frontpage.png" width="600"/>
+</div>
 
 # AKSSAM: Automatic Knot Selection in Smooth Additive Models
 Repository associated with the paper:
@@ -24,6 +27,10 @@ The structure of the repository is the following:
 │   └── simulation3.RData              # Results from executing Simulation3Poisson.qmd
 │
 ├── AKSSAM.R                           # R implementation of the AKSSAM method
+│
+├── EXAMPLE.qmd                        # Illustrative examples of AKSSAM
+|
+├── /images                            # Miscellaneous folder
 │
 ├── LICENSE.R                          # License information
 │

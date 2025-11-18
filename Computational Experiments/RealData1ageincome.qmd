@@ -1,5 +1,5 @@
 ---
-title: "AKKSAM: Real Data 1 - AUDem"
+title: "AKKSAM: Real Data 1 - age.income"
 author: "Nicolas Carrizosa Arias"
 format: 
   html:
@@ -16,10 +16,12 @@ format:
 ```{r library, warning = FALSE, message = FALSE}
 # Required Packages
 packages <- c(
-  "qgam", "caret", "corpcor", "corrplot", "dplyr", "ggplot2", "grid",
-  "gridExtra", "gridGraphics", "MASS", "Matrix", "patchwork", "pROC",
-  "pracma", "splines", "splines2", "tidyverse", "aspline", "xtable",
-  "cowplot", "scales", "mgcv", "pso"
+  "dplyr", "Matrix", "splines", "corpcor",  # AKSSAM: Essential dependencies
+  "mgcv",                                   # P-splines dependencies
+  "pso",                                    # PSO dependencies
+  "splines2", "aspline",                    # A-splines dependencies
+  "caret", "ggplot2", "grid", "gridExtra", "gridGraphics", "patchwork", "pROC",
+  "pracma", "tidyverse", "xtable", "cowplot", "scales"
 )
 
 # Install and/or load the packages

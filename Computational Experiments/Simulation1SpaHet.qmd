@@ -16,10 +16,12 @@ format:
 ```{r library, warning = FALSE, message=FALSE}
 # Required Packages
 packages <- c(
-  "qgam", "caret", "corpcor", "corrplot", "dplyr", "ggplot2", "grid",
-  "gridExtra", "gridGraphics", "MASS", "Matrix", "patchwork", "pROC",
-  "pracma", "splines", "splines2", "tidyverse", "aspline", "xtable",
-  "cowplot", "scales", "mgcv", "pso"
+  "dplyr", "Matrix", "splines", "corpcor",  # AKSSAM: Essential dependencies
+  "mgcv",                                   # P-splines dependencies
+  "pso",                                    # PSO dependencies
+  "splines2", "aspline",                    # A-splines dependencies
+  "caret", "ggplot2", "grid", "gridExtra", "gridGraphics", "patchwork", "pROC",
+  "pracma", "tidyverse", "xtable", "cowplot", "scales"
 )
 
 # Install and/or load the packages
@@ -52,6 +54,9 @@ Function to simulate the data given the sample size and the SNR.
 
 ```{r}
 simulate.data.1 <- function(n, SNR){
+  
+  # True response
+  f <- function(x) sqrt(x * (1 - x)) * sin((2 * pi * (1 + 2^(-3/5))) / (x + 2^(-3/5)))
   
   # Covariate
   x <- runif(n, 0, 1)
