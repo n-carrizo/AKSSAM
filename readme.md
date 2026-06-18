@@ -18,28 +18,28 @@ AKSSAM(X, y, family, lambda.init, ndx, bdeg,
 
 **Input:**
 <ul>
-  <li><code>X          </code>: Matrix with observed variables for each covariate (columns)</li>
-  <li><code>y          </code>: Vector of observed values of the objective variable</li>
-  <li><code>family     </code>: String; either 'gaussian', 'poisson', or 'binomial', indicating the distribution of the objective variable</li>
+  <li><code>X</code>: Matrix with observed variables for each covariate (columns)</li>
+  <li><code>y</code>: Vector of observed values of the objective variable</li>
+  <li><code>family</code>: String; either 'gaussian', 'poisson', or 'binomial', indicating the distribution of the objective variable</li>
   <li><code>lambda.init</code>: Vector of penalization parameters used as initialization </li>
-  <li><code>ndx        </code>: Vector of inner intervals for each covariate </li>
-  <li><code>bdeg       </code>: Vector containing the degree of the B-spline basis for each covariate  </li>
-  <li><code>maxiter1   </code>: Maximum iterations for weight optimization </li>
-  <li><code>maxiter2   </code>: Maximum iterations for penalization optimizatio*n </li>
-  <li><code>maxiter3   </code>: Maximum iterations for IRLS </li>
-  <li><code>tol1       </code>: Relative tolerance for convergence in weight optimization </li>
-  <li><code>tol2       </code>: Relative tolerance for penalization optimization </li>
-  <li><code>tol3       </code>: Relative tolerance for IRLS </li>
-  <li><code>epsilon    </code>: Epsilon term for the adaptive ridge procedure </li>
+  <li><code>ndx</code>: Vector of inner intervals for each covariate </li>
+  <li><code>bdeg</code>: Vector containing the degree of the B-spline basis for each covariate  </li>
+  <li><code>maxiter1</code>: Maximum iterations for weight optimization </li>
+  <li><code>maxiter2</code>: Maximum iterations for penalization optimizatio*n </li>
+  <li><code>maxiter3</code>: Maximum iterations for IRLS </li>
+  <li><code>tol1</code>: Relative tolerance for convergence in weight optimization </li>
+  <li><code>tol2</code>: Relative tolerance for penalization optimization </li>
+  <li><code>tol3</code>: Relative tolerance for IRLS </li>
+  <li><code>epsilon</code>: Epsilon term for the adaptive ridge procedure </li>
 </ul>
 
 
 **Output:** A list with the following elements:
 <ul>
-  <li><code>lambda         </code>: Vector of penalizations maximizing the restricted log-likelihood </li>
-  <li><code>K_sel          </code>: Matrix with selected knots for each covariate (columns) for optimal penalization </li>
+  <li><code>lambda</code>: Vector of penalizations maximizing the restricted log-likelihood </li>
+  <li><code>K_sel</code>: Matrix with selected knots for each covariate (columns) for optimal penalization </li>
   <li><code>New_Design_list</code>: List of design matrices after knot selection for each covariate and intercept corresponding to the optimal penalization </li>
-  <li><code>alpha.new      </code>: Ordered vector (intercept first, then covariates) storing resulting parameter estimates for the optimal penalization </li>
+  <li><code>alpha.new</code>: Ordered vector (intercept first, then covariates) storing resulting parameter estimates for the optimal penalization </li>
 </ul>
 
 ## Example
