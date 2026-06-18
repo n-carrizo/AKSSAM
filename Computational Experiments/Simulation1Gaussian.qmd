@@ -1,5 +1,5 @@
 ---
-title: "AKSSAM: Simulation 1 - SpaHet"
+title: "Simulation 1 - Gaussian"
 author: "Nicolas Carrizosa Arias"
 format: 
   html:
@@ -8,27 +8,83 @@ format:
     toc-location: left  
     self-contained: true
 ---
-
 # Functions
 
 ## Libraries
 
 ```{r library, warning = FALSE, message=FALSE}
-# Required Packages
-packages <- c(
-  "dplyr", "Matrix", "splines", "corpcor",  # AKSSAM: Essential dependencies
-  "mgcv",                                   # P-splines dependencies
-  "pso",                                    # PSO dependencies
-  "splines2", "aspline",                    # A-splines dependencies
-  "caret", "ggplot2", "grid", "gridExtra", "gridGraphics", "patchwork", "pROC",
-  "pracma", "tidyverse", "xtable", "cowplot", "scales"
-)
 
-# Install and/or load the packages
-for (pkg in packages) {
-  if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
-  library(pkg, character.only = TRUE)
-}
+options(repos = c(CRAN="https://cloud.r-project.org"))
+
+# Required Packages
+if (!requireNamespace("qgam", quietly = TRUE)) install.packages("qgam")
+library(qgam)
+
+if (!requireNamespace("caret", quietly = TRUE)) install.packages("caret")
+library(caret)
+
+if (!requireNamespace("corpcor", quietly = TRUE)) install.packages("corpcor")
+library(corpcor)
+
+if (!requireNamespace("corrplot", quietly = TRUE)) install.packages("corrplot")
+library(corrplot)
+
+if (!requireNamespace("dplyr", quietly = TRUE)) install.packages("dplyr")
+library(dplyr)
+
+if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+library(ggplot2)
+
+if (!requireNamespace("grid", quietly = TRUE)) install.packages("grid")
+library(grid)
+
+if (!requireNamespace("gridExtra", quietly = TRUE)) install.packages("gridExtra")
+library(gridExtra)
+
+if (!requireNamespace("gridGraphics", quietly = TRUE)) install.packages("gridGraphics")
+library(gridGraphics)
+
+if (!requireNamespace("MASS", quietly = TRUE)) install.packages("MASS")
+library(MASS)
+
+if (!requireNamespace("Matrix", quietly = TRUE)) install.packages("Matrix")
+library(Matrix)
+
+if (!requireNamespace("patchwork", quietly = TRUE)) install.packages("patchwork")
+library(patchwork)
+
+if (!requireNamespace("pROC", quietly = TRUE)) install.packages("pROC")
+library(pROC)
+
+if (!requireNamespace("pracma", quietly = TRUE)) install.packages("pracma")
+library(pracma)
+
+if (!requireNamespace("splines", quietly = TRUE)) install.packages("splines")
+library(splines)
+
+if (!requireNamespace("splines2", quietly = TRUE)) install.packages("splines2")
+library(splines2)
+
+if (!requireNamespace("tidyverse", quietly = TRUE)) install.packages("tidyverse")
+library(tidyverse)
+
+if (!requireNamespace("aspline", quietly = TRUE)) install.packages("aspline")
+library(aspline)
+
+if (!requireNamespace("xtable", quietly = TRUE)) install.packages("xtable")
+library(xtable)
+
+if (!requireNamespace("cowplot", quietly = TRUE)) install.packages("cowplot")
+library(cowplot)
+
+if (!requireNamespace("scales", quietly = TRUE)) install.packages("scales")
+library(scales)
+
+if (!requireNamespace("mgcv", quietly = TRUE)) install.packages("mgcv")
+library(mgcv)
+
+if (!requireNamespace("pso", quietly = TRUE)) install.packages("pso")
+library(pso)
 ```
 
 ## AKKSAM
@@ -45,68 +101,146 @@ source("Required_Scripts/AKSSAM.R")
 source("Required_Scripts/ok_gam.R")
 ```
 
-# Data
+## GeDS
 
-The simulated data consists on the function 
-$$f(x) = \sqrt{x(1-x)}\sin{\left(2\pi\cdot \frac{1+2^{-3/5}}{x+2^{-3/5}}\right)}$$
+```{r GeDs, warning = FALSE, message=FALSE}
+if (!requireNamespace("GeDS", quietly = TRUE)) install.packages("GeDS")
+library(GeDS) 
+```
+
+# Data
 
 Function to simulate the data given the sample size and the SNR.
 
-```{r}
-simulate.data.1 <- function(n, SNR){
+```{r Simulated Data 1}
+simulate.data.1 = function(n, SNR){
   
-  # True response
-  f <- function(x) sqrt(x * (1 - x)) * sin((2 * pi * (1 + 2^(-3/5))) / (x + 2^(-3/5)))
+  # This case study has m = 6 covariates
+  m = 6
   
-  # Covariate
-  x <- runif(n, 0, 1)
-  # True effect centered
-  ff <- f(x) - mean(f(x))
+  n <- n                  # Nº instances
+  X = matrix(1, n, m)     # Initialize the instance mat.
+  FF = matrix(1, n, m)    # Initialize the func. values mat.
+  y = matrix(0, n, 1)     # Initialize the obj values vect. + constant term.
+  
+  for (i in 1:m){
+    if (i %% m == 1){
+      x <- runif(n, 0, 1)
+      X[,i] = x
+      
+      f = cos(2*pi*(2*x - 2.5))
+      FF[,i] = f - mean(f)
+      y = y + FF[,i]
+    } else if (i %% m == 2){
+      x <- runif(n, 0, 1)
+      X[,i] = x
+      
+      f = 3*exp(-70*(x-0.3)^2) +  3*exp(-10*(x-0.7)^2) + x/10
+      FF[,i] = f - mean(f)
+      y = y + FF[,i]
+    } else if (i %% m == 3){
+      x <- runif(n, 0, 1)
+      X[,i] = x
+      
+      f = (x^3 - 2*sin(pi*x^3))
+      FF[,i] = f - mean(f)
+      y = y + FF[,i]
+    } else if (i %% m == 4){
+      x <- runif(n, 0, 1)
+      X[,i] = x
+      
+      f = 1/3*(x + 10*exp(-20*(x-0.5)^2))
+      FF[,i] = f - mean(f)
+      y = y + FF[,i]
+    } else if (i %% m == 5){
+      x <- runif(n, 0, 1)
+      X[,i] = x
+      
+      f = (cos(6*(2*x - 3)) - 2.5 * (x-1))
+      FF[,i] = f - mean(f)
+      y = y + FF[,i]
+    } else{
+      x <- runif(n, 0, 1)
+      X[,i] = x
+      
+      f =  5 * sqrt(x * (1 - x)) * sin((2 * pi * (1 + 2^(-3/5))) / (x + 2^(-3/5))) 
+      FF[,i] = f - mean(f)
+      y = y + FF[,i]
+    }
+  }
+  
   # Variance of the error is given by SNR 
-  signal_var = var(ff)
+  signal_var = sum(apply(FF, 2, var))
   sigma <- sqrt(signal_var/SNR)
-  # Perturbed response
-  y <- ff +  rnorm(n, sd = sigma)
+  
+  # Response
+  y = y + rnorm(n, 0, sigma)
   
   # Output
-  return(list(X = as.matrix(x),
-              FF = as.matrix(ff),
-              y = y))
+  list(X = X,
+       y = y,
+       FF = FF)
 }
 ```
 
-```{r}
+The simulated data consists on the additive model given by the following covariate effects
+
+```{r Gaussian Covariates}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: center
+#| out-width: "100%"
+
 # Simulate data
-ll = simulate.data.1(n = 500, SNR = 10)
+n = 500
+SNR = 6
+ll = simulate.data.1(n, SNR)
 X = ll$X
-y = ll$y
 FF = ll$FF
 
 # Format the dataframe
-df_long <- tibble(
-  X = as.vector(X),
-  FF = as.vector(FF)
-) %>%
-  mutate(Covariate = "Covariate 1")  # Since you only have one covariate in simulate.data.1
+df_long <- map2_dfr(
+  as.data.frame(X), as.data.frame(FF),
+  ~ tibble(X = .x, FF = .y),
+  .id = "Covariate"
+)
 
-# Covariate plot
-ggplot(df_long, aes(x = X, y = FF)) +
-  geom_line(color = "grey20", linewidth = 2) +
-  facet_wrap(~ Covariate, scales = "free_y") +
-  theme_light(base_size = 14) +
-  labs(x = NULL, y = "Value") +
-  theme(
-    strip.text = element_text(face = "bold", size = 12, color = "grey20"),
-    strip.background = element_rect(fill = "white", color = "grey80"),
-    panel.grid = element_line(color = "grey95")
-  )
+df_long <- df_long %>%
+  mutate(Covariate = factor(Covariate, labels = paste("Covariate", 1:6)))
+library(patchwork)
 
-rm(X, y, FF)
+# Split data by covariate
+covariates <- levels(df_long$Covariate)
+
+y_range <- range(df_long$FF)
+
+# Build one plot per covariate
+plots <- lapply(1:6, function(i) {
+  df_i <- df_long[df_long$Covariate == covariates[i], ]
+  
+  ggplot(df_i, aes(x = X, y = FF)) +
+    geom_line(color = "grey20", linewidth = 2) +
+    scale_y_continuous(limits = y_range) +
+    theme_light(base_size = 14) +
+    labs(
+      x = bquote(x),
+      y = bquote(f[.(i)](x))
+    ) +
+    theme(
+      panel.grid = element_line(color = "grey95")
+    )
+})
+
+# Combine into a 2x3 grid
+wrap_plots(plots, ncol = 3)
 ```
+
 
 # Pipeline
 
 ## Fitting function
+
+OJO los nodos estásn puestos en ndx + bdeg + 1 para que, cuando no se dé ninguna seleccion de nodos, se tenga el mismo nº de elementos en la base para cada uno de los métodos
 
 ```{r}
 fitting_function = function(X_train, X_test, y_train, FF_test,
@@ -118,13 +252,10 @@ fitting_function = function(X_train, X_test, y_train, FF_test,
   n = length(y_train)
   m = dim(X_train)[2]
   family = "gaussian"
+  F_test <- rowSums(FF_test)
   
   ## AKSSAM -------------------------------------------------------------------- 
   # Train the model
-  K = vector('list', m)
-  for (t in 1:m){
-    K[[t]] = my.knots(X_train[,t], min(X_train[,t]), max(X_train[,t]), ndx[t], bdeg[t])
-  }
   time1 <- system.time({
     model1 <- AKSSAM(X_train, y_train, family, lambda.init, ndx, bdeg, 
                      maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, 
@@ -135,7 +266,7 @@ fitting_function = function(X_train, X_test, y_train, FF_test,
   
   # Test
   Design_list = vector("list", m + 1)
-  Design_list[[1]] = matrix(1, length(FF_test), 1) 
+  Design_list[[1]] = matrix(1, length(y_train), 1) 
   for (t in 1:m){Design_list[[t+1]] = my.bbase4(X_test[,t], K_sel1[[t]], bdeg[t])}
   B_star <- do.call(cbind, Design_list) 
   predictions1 <- B_star %*% alpha
@@ -161,8 +292,8 @@ fitting_function = function(X_train, X_test, y_train, FF_test,
   }
   
   # Metrics
-  MSE1 <- mean((FF_test - predictions1)^2)
-  MAE1 <- mean(abs(FF_test - predictions1))
+  MSE1 <- mean((F_test - predictions1)^2)
+  MAE1 <- mean(abs(F_test - predictions1))
   EDF1 <- Size1 <- ncol(B_star)
   
   Old_Design_list = vector("list", m + 1)
@@ -187,7 +318,7 @@ fitting_function = function(X_train, X_test, y_train, FF_test,
       fit_gam_pso(
         gam_model = initial_gam_model,
         data = data,
-        n_knots = ndx + bdeg + 1,
+        n_knots = ndx[[1]] + bdeg[[1]] + 1,
         alpha = 1e-07,
         smoothing_method = "GCV.Cp",
         max_iterations = 100
@@ -195,7 +326,7 @@ fitting_function = function(X_train, X_test, y_train, FF_test,
     )
   })[3] %>% unname
   model2 <- result$model
-  K_sel2 <- result$knots$`1`
+  K_sel2 <- result$knots %>% unname
   
   # Test
   test = as.data.frame(X_test)
@@ -205,12 +336,12 @@ fitting_function = function(X_train, X_test, y_train, FF_test,
   grid2 <- predict(model2, newdata = as.data.frame(grid), type = "terms")
   
   # Metrics
-  MSE2 <- mean((FF_test - predictions2)^2)
-  MAE2 <- mean(abs(FF_test - predictions2))
+  MSE2 <- mean((F_test - predictions2)^2)
+  MAE2 <- mean(abs(F_test - predictions2))
   EDF2 <- sum(model2$edf)
   Size2 <- length(model2$coefficients)
   
-  residuals_train <- (y_train - predict(model2))
+  residuals_train <- (as.vector(y_train) - predict(model2))
   sigma2_hat <- mean(residuals_train^2)
   loglik <- -0.5 * n * log(2 * pi * sigma2_hat) - 0.5 * sum(residuals_train^2) / sigma2_hat
   AIC2 <- -2 * loglik + 2 * EDF2
@@ -232,59 +363,51 @@ fitting_function = function(X_train, X_test, y_train, FF_test,
   grid3 <- predict(model3, newdata = as.data.frame(grid), type = "terms")
   
   # Metrics
-  MSE3 <- mean((FF_test - predictions3)^2)
-  MAE3 <- mean(abs(FF_test - predictions3))
+  MSE3 <- mean((F_test - predictions3)^2)
+  MAE3 <- mean(abs(F_test - predictions3))
   EDF3 <- sum(model3$edf)
   Size3 <- length(model3$coefficients)
   
-  residuals_train <- (y_train - predict(model3))
+  residuals_train <- (as.vector(y_train) - predict(model3))
   sigma2_hat <- mean(residuals_train^2)
   loglik <- -0.5 * n * log(2 * pi * sigma2_hat) - 0.5 * sum(residuals_train^2) / sigma2_hat
   AIC3 <- -2 * loglik + 2 * EDF3
   BIC3 <- -2 * loglik + log(n) * EDF3
   
-  ## A-splines   ---------------------------------------------------------------
+  
+  ## GeDS ----------------------------------------------------------------------
   # Train the model
-  k <- ndx + bdeg + 1
-  X_train_vect <- as.vector(X_train)
-  ordering <- order(X_train_vect)
-  X_train_vect_sorted <- X_train_vect[ordering]
-  y_sorted <- y_train[ordering]
-  knots <- seq(min(X_train_vect), max(X_train_vect), length = k + 2)[-c(1, k + 2)]
-  pen <- 10 ^ seq(-4, 4, 0.25)
+  terms_GeDS   <- paste0("f(V", 1:m, ")")
+  formula_GeDS <- as.formula(paste("y ~", paste(terms_GeDS, collapse = " + ")))
   time4 <- system.time({
-    aridge <- suppressWarnings(aspline(X_train_vect_sorted, y_sorted, knots, pen, degree = 3))
+    model4 <- GeDS::NGeDSgam(formula_GeDS, data = data, internal_knots = ndx[[1]] - 1)
   })[3] %>% unname
-  K_sel4 <- aridge$knots_sel[[which.min(aridge$ebic)]]
-  B_train <- bSpline(X_train_vect, knots = K_sel4, degree = 3, intercept = TRUE)
-  colnames(B_train) <- paste0("bs", seq_len(ncol(B_train)))
-  df_train <- data.frame(y = y_train, B_train)
-  model4 <- lm(y ~ ., data = df_train)
+   K_sel4 <- model4$internal_knots$cubic.int.knots %>% unname
   
   # Test
-  X_test_vec  <- as.vector(X_test)
-  B_test <- bSpline(X_test_vec, knots = K_sel4, degree = 3, intercept = TRUE)
-  colnames(B_test) <- colnames(B_train)
-  df_test <- as.data.frame(B_test)
-  predictions4 <- as.vector(predict(model4, newdata = df_test))
-    
-  # Grid
-  B_grid <- bSpline(grid, knots = K_sel4, degree = 3, intercept = TRUE)
-  colnames(B_grid) <- colnames(B_train) 
-  df_grid <- as.data.frame(B_grid)
-  grid4 <- predict(model4, newdata = df_grid) %>% as.matrix
+  predictions4 <- as.vector(predict(model4, n = 4, newdata = test))
+  
+  # grid
+  grid4 <- do.call(cbind, lapply(terms_GeDS, function(term) {
+    matrix(
+      predict(model4, n = 4, newdata = as.data.frame(grid), base_learner = term),
+      ncol = 1, dimnames = list(NULL, term)
+    )
+  }))
   
   # Metrics
-  MSE4 <- mean((FF_test - predictions4)^2)
-  MAE4 <- mean(abs(FF_test - predictions4))
-  EDF4 <- Size4 <- length(model4$coefficients)
+  MSE4 <- mean((F_test - predictions4)^2)
+  MAE4 <- mean(abs(F_test - predictions4))
   
-  residuals_train <- (y_train - predict(model4))
-  sigma2_hat <- mean(residuals_train^2)
-  loglik <- -0.5 * n * log(2 * pi * sigma2_hat) - 0.5 * sum(residuals_train^2) / sigma2_hat
-  AIC4 <- -2 * loglik + 2 * EDF4
-  BIC4 <- -2 * loglik + log(n) * EDF4
+  K_len4 <- lapply(knots(model4, n = 4L, options ="all"), length) %>% unname
   
+  EDF4 <- Size4 <- sum(sapply(knots(model4, n = 4L, options ="all"), length) %>% unname - bdeg - 1) + 1 # intercept
+  
+  residuals_train4 <- y_train - as.vector(predict(model4, n = 4, newdata = data))
+  sigma2_hat4 <- mean(residuals_train4^2)
+  loglik4 <- -0.5 * n * log(2 * pi * sigma2_hat4) - 0.5 * sum(residuals_train4^2) / sigma2_hat4
+  AIC4 <- -2 * loglik4 + 2 * EDF4
+  BIC4 <- -2 * loglik4 + log(n) * EDF4
   
   ## Assignment   --------------------------------------------------------------
   return(list(
@@ -302,7 +425,7 @@ fitting_function = function(X_train, X_test, y_train, FF_test,
     PSO = list(MSE = MSE2,
                MAE = MAE2,
                Grid = grid2,
-               K_sel = list(K_sel2),
+               K_sel = K_sel2,
                EDF = EDF2,
                Size = Size2,
                AIC = AIC2,
@@ -317,16 +440,16 @@ fitting_function = function(X_train, X_test, y_train, FF_test,
                     AIC = AIC3,
                     BIC = BIC3,
                     Time = time3),
-    # A-splines algorithm results
-    ASplines = list(MSE = MSE4, 
-                    MAE = MAE4,
-                    Grid = grid4,
-                    K_sel = list(K_sel4),
-                    EDF = EDF4,
-                    Size = Size4,
-                    AIC = AIC4,
-                    BIC = BIC4,
-                    Time = time4)
+    # GeDS algorithm results
+    GeDS = list(MSE = MSE4,
+                  MAE = MAE4,
+                  Grid = grid4,
+                  K_sel = K_sel4,
+                  EDF = EDF4,
+                  Size = Size4,
+                  AIC = AIC4,
+                  BIC = BIC4,
+                  Time = time4)
               ))
 }
 ```
@@ -343,8 +466,8 @@ covariates_plot <- function(Results, grid, m, N, n, SNR){
   FF = ll$FF
   
   ## Miscellanea
-  methods <- c('AKSSAM', 'PSO', 'P-splines', 'A-splines')
-  colors <- c("True effect" = "grey50", "AKSSAM" = "#F8766D", "PSO" = "#7CAE00", "P-splines" = "#00BFC4", "A-splines" = "#C77CFF")
+  methods <- c('AKSSAM', 'PSO', 'P-splines', 'GeDS')
+  colors <- c("True effect" = "grey50", "AKSSAM" = "#F8766D", "PSO" = "#7CAE00", "P-splines" = "#00BFC4", "GeDS" = '#EE9A49')
         
   
   ## Calculate the mean estimated covariates' effects over the simulations
@@ -374,12 +497,16 @@ covariates_plot <- function(Results, grid, m, N, n, SNR){
   Grid_Psp_matrices <- lapply(Results, function(x) x$PSplines$Grid)
   mean_Grid_Psp <- Reduce("+", Grid_Psp_matrices) / N
   
-  # A-Splines
-  Grid_Asp_matrices <- lapply(Results, function(x) x$ASplines$Grid)
-  mean_Grid_Asp <- Reduce("+", Grid_Asp_matrices) / N
-  temp <- lapply(Results, function(x) x$ASplines$K_sel)
-  K_sel_Asp <- lapply(1:m, function(i){
-    unlist(lapply(1:N, function(t) temp[[t]][[i]]))
+  # GeDS algorithm
+  Grid_GeDS_matrices <- lapply(Results, function(x) x$GeDS$Grid)
+  mean_Grid_GeDS <- Reduce("+", Grid_GeDS_matrices) / N
+  mean_Grid_GeDS <- apply(mean_Grid_GeDS, 2, function(x) x - mean(x)) ## Possible misspecification
+  temp <- lapply(Results, function(x) x$GeDS$K_sel)
+  K_sel_GeDS <- lapply(1:m, function(i){
+    unlist(lapply(1:N, function(t){
+      v <- temp[[t]][[i]]
+      return(v)
+    }))
   })
   
   # Combined grids
@@ -387,7 +514,7 @@ covariates_plot <- function(Results, grid, m, N, n, SNR){
     "AKSSAM" = mean_Grid_AKSSAM,
     "PSO" = mean_Grid_PSO,
     "P-splines" = mean_Grid_Psp,
-    "A-splines" = mean_Grid_Asp
+    'GeDS' = mean_Grid_GeDS
   )
 
   
@@ -411,12 +538,9 @@ covariates_plot <- function(Results, grid, m, N, n, SNR){
     )
     plot_df <- rbind(plot_df, true_df)
     plot_df$Method <- factor(plot_df$Method,
-                         levels = c("P-splines", "A-splines", "PSO", "AKSSAM", "True effect"))
+                         levels = c("P-splines", "PSO", "AKSSAM", 'GeDS', "True effect"))
 
 
-    rug_df_AKSSAM <- data.frame(x = K_sel_AKSSAM[[t]])
-    rug_df_PSO <- data.frame(x = K_sel_PSO[[t]])
-    rug_df_Asp <- data.frame(x = K_sel_Asp[[t]])
     
     y_range <- range(plot_df$y, na.rm = TRUE)
     y_min <- y_range[1]
@@ -424,28 +548,44 @@ covariates_plot <- function(Results, grid, m, N, n, SNR){
     y_base <- y_min - 0.4 * (y_max - y_min)
     dy <- (y_max - y_min) * 0.07
     
-    rug_df_AKSSAM$ymin <- y_base + 2*dy
-    rug_df_AKSSAM$ymax <- y_base + 3*dy
-    
-    rug_df_PSO$ymin <- y_base
-    rug_df_PSO$ymax <- y_base + dy
-    
-    rug_df_Asp$ymin <- y_base + dy
-    rug_df_Asp$ymax <- y_base + 2*dy
+    rug_df_AKSSAM <- if (length(K_sel_AKSSAM[[t]]) > 0) {
+        data.frame(x = K_sel_AKSSAM[[t]], 
+                   ymin = y_base + 2*dy, 
+                   ymax = y_base + 3*dy)
+      } else {
+        data.frame(x = numeric(0), ymin = numeric(0), ymax = numeric(0))
+      }
+      
+      rug_df_GeDS <- if (length(K_sel_GeDS[[t]]) > 0) {
+        data.frame(x = K_sel_GeDS[[t]], 
+                   ymin = y_base + dy, 
+                   ymax = y_base + 2*dy)
+      } else {
+        data.frame(x = numeric(0), ymin = numeric(0), ymax = numeric(0))
+      }
+      
+      rug_df_PSO <- if (length(K_sel_PSO[[t]]) > 0) {
+        data.frame(x = K_sel_PSO[[t]], 
+                   ymin = y_base, 
+                   ymax = y_base + dy)
+      } else {
+        data.frame(x = numeric(0), ymin = numeric(0), ymax = numeric(0))
+      }
     
     plot <- ggplot(plot_df, aes(x = x, y = y, color = Method)) +
       geom_line(linewidth = 3, alpha = 0.6, data = subset(plot_df, Method == "True effect")) +
       geom_line(linewidth = 1.1, alpha = 0.8, data = subset(plot_df, Method != "True effect")) +
       # 'Density' of selected knots
       geom_segment(data = rug_df_AKSSAM,
+                 aes(x = x, xend = x, y = ymin, yend = ymax),
+                 color = "#F8766D", linewidth = 2, alpha = 2/N) +
+      geom_segment(data = rug_df_GeDS,
                    aes(x = x, xend = x, y = ymin, yend = ymax),
-                   color = "#F8766D", linewidth = 2, alpha = 2/N) +
-    geom_segment(data = rug_df_PSO,
+                   inherit.aes = FALSE,
+                   color = "#EE9A49", linewidth = 2, alpha = 2/N) +
+      geom_segment(data = rug_df_PSO,
                  aes(x = x, xend = x, y = ymin, yend = ymax),
                  color = "#7CAE00", linewidth = 2, alpha = 2/N) +
-    geom_segment(data = rug_df_Asp,
-                 aes(x = x, xend = x, y = ymin, yend = ymax),
-                 color = "#C77CFF", linewidth = 2, alpha = 2/N) +
       scale_color_manual(values = colors) +
       theme_minimal() +
       scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
@@ -463,9 +603,9 @@ covariates_plot <- function(Results, grid, m, N, n, SNR){
   
   
   ## Combine the plots
-  combined <- wrap_plots(plot_list, nrow = 1, guides = "collect") +
+  combined <- wrap_plots(plot_list, nrow = 2, guides = "collect") +
   plot_annotation(
-    title = paste0("SpaHet Simulation, n = ", n, ", SNR = ", SNR),
+    title = paste0("Gaussian Simulation, n = ", n, ", SNR = ", SNR),
     theme = theme(
       plot.title = element_text(size = 15, face = "bold"),
       legend.position = "bottom",
@@ -485,9 +625,9 @@ covariates_plot <- function(Results, grid, m, N, n, SNR){
 ```{r}
 error_plot <- function(Results){
   
-  methods <- c("AKSSAM", "PSO", "PSplines", "ASplines")
+  methods <- c("AKSSAM", "PSO", "PSplines", 'GeDS')
   metrics <- c("MSE", "MAE", "EDF", "Size", "Time", "BIC")
-  metric_labels <- c("MSE", "MAE", "EDF", "Basis Size", "Time", "BIC")
+  metric_labels <- c("MSE", "MAE", "EDF", "Basis Size", "log10(Time)", "BIC")
   
   all_data <- list()
   for (method in methods) {
@@ -502,26 +642,26 @@ error_plot <- function(Results){
     }
   }
   df <- bind_rows(all_data)
+  df$Value <- ifelse(df$Metric == "Time", log10(df$Value), df$Value)
   df$Metric <- recode_factor(df$Metric,
     MSE = "MSE",
     MAE = "MAE",
     EDF = "EDF",
     Size = "Basis Size",
-    Time = "Time",
+    Time = "log10(Time)",
     BIC = "BIC"
   )
   df$Metric <- factor(df$Metric, levels = metric_labels)
-  df$Metric <- factor(df$Metric, levels = c("MSE", "MAE", "Time", "EDF", "Basis Size", "BIC"))
+  df$Metric <- factor(df$Metric, levels = c("MSE", "MAE", "log10(Time)", "EDF", "Basis Size", "BIC"))
   
   df$Method <- recode(df$Method,
-    "PSplines" = "P-splines",
-    "ASplines" = "A-splines"
+    "PSplines" = "P-splines"
   )
   method_colors <- c(
     "AKSSAM"   = "#F8766D",
     "PSO"      = "#7CAE00",
     "P-splines" = "#00BFC4",
-    "A-splines" = "#C77CFF"
+    'GeDS' = '#EE9A49'
   )
   
   # Boxplot of all performance metrics
@@ -556,7 +696,7 @@ wrapper_function = function(N, n, SNR,
   
   # Set seed for reproducibility
   set.seed(12345)
-  m <- 1
+  m <- 6
   
   # List which contains the metrics for each simulation
   Results <- rep(list(
@@ -567,10 +707,8 @@ wrapper_function = function(N, n, SNR,
                     EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA),
       PSplines = list(MSE = NA, MAE = NA, Grid = NA,
                       EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA),
-      ASplines = list(MSE = NA, MAE = NA, Grid = NA, K_sel = vector("list", m),
-                      EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA)
-    )
-  ), N)
+      GeDS    = list(MSE = NA, MAE = NA, Grid = NA, K_sel = vector("list", m),
+                    EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA))), N)
   
   ## Create evaluation grid
   grid <- sapply(1:m, function(j) seq(0, 1, length.out = 100)) %>% as.matrix
@@ -588,13 +726,26 @@ wrapper_function = function(N, n, SNR,
       # Simulate the data
       data <- simulate.data.1(n, SNR) 
       X_train <- X_test <- data$X
-      y_train <- data$y
+      y_train <- y_test <- data$y
       FF_test <- data$FF
       # Fit the models
-      result <- fitting_function(X_train, X_test, y_train, FF_test,
-                                 ndx, bdeg, lambda.init,
-                                 maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
-                                 grid)
+      result <- purrr::quietly(fitting_function)(
+        X_train = X_train,
+        X_test = X_test,
+        y_train = y_train,
+        FF_test = FF_test,
+        ndx = ndx,
+        bdeg = bdeg,
+        lambda.init = lambda.init,
+        maxiter1 = maxiter1,
+        maxiter2 = maxiter2,
+        maxiter3 = maxiter3,
+        tol1 = tol1,
+        tol2 = tol2,
+        tol3 = tol3,
+        epsilon = epsilon,
+        grid = grid
+      )$result
       
       # Store the result, increase index and restart try_attempts
       Results[[i]] <- result
@@ -632,7 +783,7 @@ wrapper_function = function(N, n, SNR,
 process_function <- function(Results, N, n, SNR){
   
   ## Miscelanea
-  m <- 1
+  m <- 6
   grid <- sapply(1:m, function(j) seq(0, 1, length.out = 100)) %>% as.matrix
   
   ## Covariates estimated effect plot 
@@ -642,7 +793,7 @@ process_function <- function(Results, N, n, SNR){
   ## Error metrics plot and values
   err_plot <- error_plot(Results)
   
-  methods <- c("AKSSAM", "PSO", "PSplines", "ASplines")
+  methods <- c("AKSSAM", "PSO", "PSplines", "GeDS")
   metrics <- c("MSE", "MAE", "AIC", "BIC", "EDF", "Size", "Time")
   
   err_metrics <- list()
@@ -668,8 +819,17 @@ process_function <- function(Results, N, n, SNR){
 }
 ```
 
+# Load Data
+
+Load the .RData if the simulations are not run.
+
+```{r load, eval = FALSE}
+load("simulation1.RData")
+```
 
 # Simulations
+
+To process the results, call for results_n_SNR$covariates_plot, results_n_SNR$err_plot or  results_n_SNR$err_metrics.
 
 ## n = 300
 
@@ -679,7 +839,7 @@ process_function <- function(Results, N, n, SNR){
 ll_n300_SNR1 <- wrapper_function(N = 100, n = 300, SNR = 1, 
                        maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
                        tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, epsilon = 1e-5,
-                       ndx = 40, bdeg = 3, lambda.init = 10)
+                       ndx = rep(40, 6), bdeg = rep(3, 6), lambda.init = rep(10, 6))
 ```
 
 ```{r Processing n 300 SNR 1, eval = FALSE}
@@ -693,11 +853,11 @@ results_n300_SNR1 <- process_function(Results = ll_n300_SNR1, N = 100, n = 300, 
 ll_n300_SNR2 <- wrapper_function(N = 100, n = 300, SNR = 2, 
                        maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
                        tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, epsilon = 1e-5,
-                       ndx = 40, bdeg = 3, lambda.init = 10)
+                       ndx = rep(40, 6), bdeg = rep(3, 6), lambda.init = rep(10, 6))
 ```
 
 ```{r Processing n 300 SNR 2, eval = FALSE}
-results_n300_SNR2 <- process_function(Results = ll_n300_SNR2, N=100, n=300, SNR=2)
+results_n300_SNR2 <- process_function(Results = ll_n300_SNR2, N = 100, n = 300, SNR = 2)
 ```
 
 
@@ -707,11 +867,11 @@ results_n300_SNR2 <- process_function(Results = ll_n300_SNR2, N=100, n=300, SNR=
 ll_n300_SNR4 <- wrapper_function(N = 100, n = 300, SNR = 4, 
                        maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
                        tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, epsilon = 1e-5,
-                       ndx = 40, bdeg = 3, lambda.init = 10)
+                       ndx = rep(40, 6), bdeg = rep(3, 6), lambda.init = rep(10, 6))
 ```
 
 ```{r Processing n 300 SNR 4, eval = FALSE}
-results_n300_SNR4 <- process_function(Results = ll_n300_SNR4, N=100, n=300, SNR=4)
+results_n300_SNR4 <- process_function(Results = ll_n300_SNR4, N = 100, n = 300, SNR = 4)
 ```
 
 
@@ -723,7 +883,7 @@ results_n300_SNR4 <- process_function(Results = ll_n300_SNR4, N=100, n=300, SNR=
 ll_n500_SNR1 <- wrapper_function(N = 100, n = 500, SNR = 1, 
                        maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
                        tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, epsilon = 1e-5,
-                       ndx = 40, bdeg = 3, lambda.init = 10)
+                       ndx = rep(40, 6), bdeg = rep(3, 6), lambda.init = rep(10, 6))
 ```
 
 ```{r Processing n 500 SNR 1, eval = FALSE}
@@ -737,7 +897,7 @@ results_n500_SNR1 <- process_function(Results = ll_n500_SNR1, N = 100, n = 500, 
 ll_n500_SNR2 <- wrapper_function(N = 100, n = 500, SNR = 2, 
                        maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
                        tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, epsilon = 1e-5,
-                       ndx = 40, bdeg = 3, lambda.init = 10)
+                       ndx = rep(40, 6), bdeg = rep(3, 6), lambda.init = rep(10, 6))
 ```
 
 ```{r Processing n 500 SNR 2, eval = FALSE}
@@ -751,7 +911,7 @@ results_n500_SNR2 <- process_function(Results = ll_n500_SNR2, N = 100, n = 500, 
 ll_n500_SNR4 <- wrapper_function(N = 100, n = 500, SNR = 4, 
                        maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
                        tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, epsilon = 1e-5,
-                       ndx = 40, bdeg = 3, lambda.init = 10)
+                       ndx = rep(40, 6), bdeg = rep(3, 6), lambda.init = rep(10, 6))
 ```
 
 ```{r Processing n 500 SNR 4, eval = FALSE}
@@ -767,7 +927,7 @@ results_n500_SNR4 <- process_function(Results = ll_n500_SNR4, N = 100, n = 500, 
 ll_n800_SNR1 <- wrapper_function(N = 100, n = 800, SNR = 1, 
                        maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
                        tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, epsilon = 1e-5,
-                       ndx = 40, bdeg = 3, lambda.init = 10)
+                       ndx = rep(40, 6), bdeg = rep(3, 6), lambda.init = rep(10, 6))
 ```
 
 ```{r Processing n 800 SNR 1, eval = FALSE}
@@ -781,7 +941,7 @@ results_n800_SNR1 <- process_function(Results = ll_n800_SNR1, N = 100, n = 800, 
 ll_n800_SNR2 <- wrapper_function(N = 100, n = 800, SNR = 2, 
                        maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
                        tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, epsilon = 1e-5,
-                       ndx = 40, bdeg = 3, lambda.init = 10)
+                       ndx = rep(40, 6), bdeg = rep(3, 6), lambda.init = rep(10, 6))
 ```
 
 ```{r Processing n 800 SNR 2, eval = FALSE}
@@ -795,7 +955,7 @@ results_n800_SNR2 <- process_function(Results = ll_n800_SNR2, N = 100, n = 800, 
 ll_n800_SNR4 <- wrapper_function(N = 100, n = 800, SNR = 4, 
                        maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
                        tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, epsilon = 1e-5,
-                       ndx = 40, bdeg = 3, lambda.init = 10)
+                       ndx = rep(40, 6), bdeg = rep(3, 6), lambda.init = rep(10, 6))
 ```
 
 ```{r Processing n 800 SNR 4, eval = FALSE}
@@ -860,13 +1020,12 @@ xtable::xtable(gaussian_table2)
 ## Reduced table
 
 ```{r Reduced Table, eval = FALSE}
-reduced_gaussian_table2 <- gaussian_table2[, c(1,2,3,4,6,7,9,10,11,13,14,15, 16,17,18,20,21,22,23,24,25,27,28,30)]
+reduced_gaussian_table2 <- gaussian_table2[, c(1,2,3,4,6,7,9,10,11,13,14,15, 16,17,18,20,21,22,23)]
 
 names(reduced_gaussian_table2) = c('n', 'SNR', 
                            'MSE AKSSAM', 'MAE AKSSAM', 'BIC AKSSAM', 'EDF & Size AKSSAM', 'Time AKKSAM',
                            "MSE PSO", "MAE PSO", "BIC PSO", "EDF PSO", "Size PSO", 'Time PSO',
-                           "MSE P-splines", "MAE P-splines", "BIC P-splines", "EDF P-splines", "Size P-splines", 'Time P-splines',
-                           'MSE A-splines', 'MAE A-splines', 'BIC A-splines', 'EDF & Size A-splines', 'Time A-splines')
+                           "MSE P-splines", "MAE P-splines", "BIC P-splines", "EDF P-splines", "Size P-splines", 'Time P-splines')
 
 # Display the Table
 knitr::kable(reduced_gaussian_table2, format = "html", caption = "Mean Results for the Gaussian Scenario")
@@ -878,10 +1037,12 @@ xtable::xtable(reduced_gaussian_table2)
 
 # Save the RData
 
-```{r Save the data}
-# Checkpoint
-save.image(file = "simulation1.RData")
+```{r Save the data, eval = FALSE}
+# save.image(file = "simualtion1.RData")
 ```
+
+
+
 
 
 

@@ -38,6 +38,12 @@ source("AKSSAM.R")
 # Univariate Gaussian Response
 
 ```{r}
+#| fig-width: 10
+#| fig-height: 5
+#| out-width: "100%"
+#| fig-align: "center"
+
+
 ## Simulate the data
 set.seed(12345)                              # Set seed for reproducibility
 m = 1                                        # Nº of covariates
@@ -52,8 +58,8 @@ y = f + rnorm(n, 0, 0.05)                    # Response
 
 ## AKSSAM 
 model = AKSSAM(X = X, y = y, family = "gaussian", 
-               lambda.init = rep(0.1, m), ndx = rep(60, m), bdeg = rep(3, m), 
-               maxiter1 = 100, maxiter2 = 100, maxiter3 = 200, 
+               lambda.init = rep(10, m), ndx = rep(60, m), bdeg = rep(3, m), 
+               maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
                tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, 
                epsilon = 1e-5)
 
@@ -90,55 +96,91 @@ predictions <- B_star %*% alpha
 
 ## Plot the results
 plot_list <- lapply(1:m, function(i) {
-  
-  # Order the X values
-  o <- order(X[, i])
-  
-  # True effect
-  data <- data.frame( 
-    x = X[o, i], 
-    y = y[o]
-  )
-  
-  # Estimated effect
-  predicts <- data.frame( 
-    x = seq(0,1, length.out = 100),
-    pred = covariate_predictions[[i]]
-  )
-  
-  
-  # Plot the data
-  plot <- ggplot() +
-    geom_point(data = data, aes(x, y), shape = 1) +  
-    geom_line(data = predicts, aes(x, pred), linewidth = 1, col = "red") +         
-    geom_point(
-      data = data.frame(x = K_sel[[i]], y = 0),
-      aes(x = x, y = y), 
-      shape = 16, color = "blue"
-    ) +
-    theme(
-      legend.position = "none",                                                   
-      axis.title = element_blank(),                                               
-      panel.grid.minor = element_blank()                                         
-    ) 
-  
-  
-  return(plot)
+    
+    # Order the X values
+    o <- order(X[, i])
+    
+    # True effect
+    data <- data.frame( 
+        x = X[o, i], 
+        y = y[o],
+        type = "True Effect"
+    )
+    
+    # Estimated effect
+    predicts <- data.frame( 
+        x = seq(0, 1, length.out = 100),
+        pred = covariate_predictions[[i]],
+        type = "Estimated Effect"
+    )
+    
+    # Knot positions
+    knots <- data.frame(
+        x = K_sel[[i]],
+        y = 0,
+        type = "Selected Knots"
+    )
+    
+    # Plot the data
+    plot <- ggplot() +
+        # Observed points
+        geom_point(data = data, aes(x, y, color = type), 
+                   shape = 1, size = 2, alpha = 0.6) +  
+        # Estimated line
+        geom_line(data = predicts, aes(x, pred, color = type), 
+                  linewidth = 1.2) +         
+        # Knots
+        geom_point(data = knots, aes(x, y, color = type), 
+                   shape = 16, size = 3) +
+        # Custom colors
+        scale_color_manual(
+            values = c("True Effect" = "grey40", 
+                       "Estimated Effect" = "#E41A1C", 
+                       "Selected Knots" = "#377EB8")
+        ) +
+        theme_minimal(base_size = 12) +
+        theme(
+            axis.title = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.grid.major = element_line(color = "grey90", linewidth = 0.5),
+            panel.border = element_rect(fill = NA, color = "grey70", linewidth = 0.5),
+            plot.background = element_rect(fill = "white", color = NA),
+            axis.text = element_text(color = "grey40"),
+            legend.position = "none"
+        ) +
+        geom_hline(yintercept = 0, color = "grey70", linewidth = 0.3, linetype = "dashed")
+    
+    return(plot)
 })
 
 # Combine the plots
 combined <- wrap_plots(plot_list, nrow = 1, guides = "collect") +
-  plot_annotation(
-    title = "Gaussian Example",
-    theme = theme(
-      plot.title = element_text(size = 15, face = "bold"),
-      legend.position = "bottom",
-      legend.direction = "horizontal",
-      legend.background = element_rect(fill = alpha("white", 0.7), color = NA)
+    plot_annotation(
+        title = "Gaussian Example",
+        theme = theme(
+            plot.title = element_text(size = 16, face = "bold", hjust = 0.5, 
+                                     color = "#2C3E50"),
+            plot.subtitle = element_text(size = 11, hjust = 0.5, 
+                                        color = "#5D6D7E", margin = margin(b = 10))
+        )
+    ) &
+    theme(
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 11, color = "#2C3E50"),
+        legend.background = element_rect(fill = alpha("white", 0.9), 
+                                         color = "grey80", 
+                                         linewidth = 0.5,
+                                         linetype = "solid"),
+        legend.margin = margin(t = 8, r = 15, b = 8, l = 15),
+        legend.spacing.x = unit(0.3, "cm"),
+        legend.key.size = unit(1.2, "cm"),
+        legend.key.width = unit(1.5, "cm")
     )
-  )
 
-combined
+# Display the plot
+print(combined)
 ```
 
 
@@ -181,6 +223,11 @@ simulate.data.binom = function(m, n){
 ```
 
 ```{r}
+#| fig-width: 15
+#| fig-height: 5
+#| out-width: "100%"
+#| fig-align: "center"
+
 ## Simulate the data
 m = 2                           # Nº of covariates
 n = 1000                        # Nº of instances
@@ -193,8 +240,8 @@ rm(ll)                          # Erase the list
 
 ## AKSSAM 
 model = AKSSAM(X = X, y = y, family = "binomial", 
-               lambda.init = rep(1, m), ndx = rep(30, m), bdeg = rep(3, m), 
-               maxiter1 = 100, maxiter2 = 100, maxiter3 = 200, 
+               lambda.init = rep(10, m), ndx = rep(30, m), bdeg = rep(3L, m), 
+               maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
                tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, 
                epsilon = 1e-5)
 
@@ -230,55 +277,90 @@ predictions <- B_star %*% alpha
 
 ## Plot the results
 plot_list <- lapply(1:m, function(i) {
-
-  # Order the X values
-  o <- order(X[, i])
-  
-  # True effect
-  data <- data.frame( 
-    x = X[o, i], 
-    y = FF[o, i]
-  )
-  
-  # Estimated effect
-  predicts <- data.frame( 
-    x = seq(-0.5,0.5, length.out = 100),
-    pred = covariate_predictions[[i]]
-  )
-  
-  
-  # Plot the data
-  plot <- ggplot() +
-    geom_point(data = data, aes(x, y), shape = 1) +  
-    geom_line(data = predicts, aes(x, pred), linewidth = 1, col = "red") +         
-     geom_point(
-        data = data.frame(x = K_sel[[i]], y = 0),
-        aes(x = x, y = y), 
-        shape = 16, color = "blue"
-      ) +
-    theme(
-      legend.position = "none",                                                   
-      axis.title = element_blank(),                                               
-      panel.grid.minor = element_blank()                                         
-    ) +
-    labs(title = paste0('Covariate ', i))
-  
-  
+    
+    # Order the X values
+    o <- order(X[, i])
+    
+    # True effect
+    data <- data.frame( 
+        x = X[o, i], 
+        y = FF[o,i],
+        type = "True Effect"
+    )
+    
+    # Estimated effect
+    predicts <- data.frame( 
+        x = seq(-0.5,0.5, length.out = 100),
+        pred = covariate_predictions[[i]],
+        type = "Estimated Effect"
+    )
+    
+    # Knot positions
+    knots <- data.frame(
+        x = K_sel[[i]],
+        y = 0,
+        type = "Selected Knots"
+    )
+    
+    # Plot the data
+    plot <- ggplot() +
+        # Observed points
+        geom_point(data = data, aes(x, y, color = type), 
+                   shape = 1, size = 2, alpha = 0.6) +  
+        # Estimated line
+        geom_line(data = predicts, aes(x, pred, color = type), 
+                  linewidth = 1.2) +         
+        # Knots
+        geom_point(data = knots, aes(x, y, color = type), 
+                   shape = 16, size = 3) +
+        # Custom colors
+        scale_color_manual(
+            values = c("True Effect" = "grey40", 
+                       "Estimated Effect" = "#E41A1C", 
+                       "Selected Knots" = "#377EB8")
+        ) +
+        theme_minimal(base_size = 12) +
+        theme(
+            axis.title = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.grid.major = element_line(color = "grey90", linewidth = 0.5),
+            panel.border = element_rect(fill = NA, color = "grey70", linewidth = 0.5),
+            plot.background = element_rect(fill = "white", color = NA),
+            axis.text = element_text(color = "grey40"),
+            legend.position = "none"  
+        ) +
+        geom_hline(yintercept = 0, color = "grey70", linewidth = 0.3, linetype = "dashed")
+    
     return(plot)
 })
 
-# Combine the plots
+# Combine the plots 
 combined <- wrap_plots(plot_list, nrow = 1, guides = "collect") +
-  plot_annotation(
-    title = "Binomial Example",
-    theme = theme(
-      plot.title = element_text(size = 15, face = "bold"),
-      legend.position = "bottom",
-      legend.direction = "horizontal",
-      legend.background = element_rect(fill = alpha("white", 0.7), color = NA)
+    plot_annotation(
+        title = "Binomial Example",
+        theme = theme(
+            plot.title = element_text(size = 16, face = "bold", hjust = 0.5, 
+                                     color = "#2C3E50"),
+            plot.subtitle = element_text(size = 11, hjust = 0.5, 
+                                        color = "#5D6D7E", margin = margin(b = 10))
+        )
+    ) &
+    theme(
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 11, color = "#2C3E50"),
+        legend.background = element_rect(fill = alpha("white", 0.9), 
+                                         color = "grey80", 
+                                         linewidth = 0.5,
+                                         linetype = "solid"),
+        legend.margin = margin(t = 8, r = 15, b = 8, l = 15),
+        legend.spacing.x = unit(0.3, "cm"),
+        legend.key.size = unit(1.2, "cm"),
+        legend.key.width = unit(1.5, "cm")
     )
-  )
 
-combined
+# Display the plot
+print(combined)
 ```
 

@@ -1,5 +1,5 @@
 ---
-title: "AKSSAM: Real Data 2 - ElectricLoad"
+title: "Real Data 2 - PimaIndians - Binomial"
 author: "Nicolas Carrizosa Arias"
 format: 
   html:
@@ -14,22 +14,88 @@ format:
 ## Libraries
 
 ```{r library, warning = FALSE, message = FALSE}
-# Required Packages
-packages <- c(
-  "dplyr", "Matrix", "splines", "corpcor",  # AKSSAM: Essential dependencies
-  "mgcv",                                   # P-splines dependencies
-  "pso",                                    # PSO dependencies
-  "splines2", "aspline",                    # A-splines dependencies
-  "caret", "ggplot2", "grid", "gridExtra", "gridGraphics", "patchwork", "pROC",
-  "pracma", "tidyverse", "xtable", "cowplot", "scales"
-)
 
-# Install and/or load the packages
-for (pkg in packages) {
-  if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
-  library(pkg, character.only = TRUE)
-}
+options(repos = c(CRAN="https://cloud.r-project.org"))
+
+# Required Packages
+if (!requireNamespace("qgam", quietly = TRUE)) install.packages("qgam")
+library(qgam)
+
+if (!requireNamespace("caret", quietly = TRUE)) install.packages("caret")
+library(caret)
+
+if (!requireNamespace("corpcor", quietly = TRUE)) install.packages("corpcor")
+library(corpcor)
+
+if (!requireNamespace("corrplot", quietly = TRUE)) install.packages("corrplot")
+library(corrplot)
+
+if (!requireNamespace("dplyr", quietly = TRUE)) install.packages("dplyr")
+library(dplyr)
+
+if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+library(ggplot2)
+
+if (!requireNamespace("grid", quietly = TRUE)) install.packages("grid")
+library(grid)
+
+if (!requireNamespace("gridExtra", quietly = TRUE)) install.packages("gridExtra")
+library(gridExtra)
+
+if (!requireNamespace("gridGraphics", quietly = TRUE)) install.packages("gridGraphics")
+library(gridGraphics)
+
+if (!requireNamespace("MASS", quietly = TRUE)) install.packages("MASS")
+library(MASS)
+
+if (!requireNamespace("Matrix", quietly = TRUE)) install.packages("Matrix")
+library(Matrix)
+
+if (!requireNamespace("patchwork", quietly = TRUE)) install.packages("patchwork")
+library(patchwork)
+
+if (!requireNamespace("pROC", quietly = TRUE)) install.packages("pROC")
+library(pROC)
+
+if (!requireNamespace("pracma", quietly = TRUE)) install.packages("pracma")
+library(pracma)
+
+if (!requireNamespace("splines", quietly = TRUE)) install.packages("splines")
+library(splines)
+
+if (!requireNamespace("splines2", quietly = TRUE)) install.packages("splines2")
+library(splines2)
+
+if (!requireNamespace("tidyverse", quietly = TRUE)) install.packages("tidyverse")
+library(tidyverse)
+
+if (!requireNamespace("aspline", quietly = TRUE)) install.packages("aspline")
+library(aspline)
+
+if (!requireNamespace("xtable", quietly = TRUE)) install.packages("xtable")
+library(xtable)
+
+if (!requireNamespace("cowplot", quietly = TRUE)) install.packages("cowplot")
+library(cowplot)
+
+if (!requireNamespace("scales", quietly = TRUE)) install.packages("scales")
+library(scales)
+
+if (!requireNamespace("mgcv", quietly = TRUE)) install.packages("mgcv")
+library(mgcv)
+
+if (!requireNamespace("pso", quietly = TRUE)) install.packages("pso")
+library(pso)
+
+if (!requireNamespace("aspline", quietly = TRUE)) install.packages("aspline")
+library(aspline)
 ```
+
+```{r library logistic, warning = FALSE, message = FALSE}
+if (!requireNamespace("ROCR", quietly = TRUE)) install.packages("ROCR")
+library(ROCR)
+```
+
 
 ## AKKSAM
 
@@ -38,32 +104,31 @@ for (pkg in packages) {
 source("Required_Scripts/AKSSAM.R")
 ```
 
-## OKPSO
 
-```{r PSO, warning = FALSE, message=FALSE}
-# PSO
-source("Required_Scripts/ok_gam.R")
+## GeDS
+
+```{r GeDS, warning = FALSE, message=FALSE}
+library(GeDS) 
 ```
-
 
 # Data
 
-The considered dataset is `electric_load`, from the `R` package `opera`: Electricity forecasting data set provided by EDF R&D. It contains weekly measurements of the total electricity consumption in France from 1996 to 2009, together with several covariates, including temperature, industrial production indices (source: INSEE) and calendar information.
+The considered dataset is 'PimaIndiansDiabetes' form the 'mlbench' package.
 
 ```{r}
 # Load the dataset
-load("Required_Scripts/electric_load.RData")
+library(mlbench)
+  data("PimaIndiansDiabetes")
 
-# Select the variables of interest
-electric_load <- electric_load %>% na.omit
-data <- electric_load %>% dplyr::select(Load1, NumWeek, Temp)
-head(data)
+  # Select the variables of interest
+  PimaIndiansDiabetes <- PimaIndiansDiabetes %>% dplyr::select(mass, glucose, insulin, triceps, diabetes)
+  data_no_dem <- PimaIndiansDiabetes %>% dplyr::select(-diabetes)
 
 ## Pair Plot
-data_no_dem <- data %>% scale(center = TRUE, scale = TRUE)
+data_no_dem <- data_no_dem %>% scale(center = TRUE, scale = TRUE)
 pairs(data_no_dem,
       pch = 19,
-      main = "ElectricLoad",
+      main = "Smarket",
       col = 'grey40',
       cex = 0.5)
 
@@ -137,9 +202,10 @@ fitting_function = function(X_train, X_test, y_train, y_test,
                             grid){
   
   # Nº of instances and covariates
-  n = length(y_train)
-  m = dim(X_train)[2]
-  family = "gaussian"
+  n <- length(y_train)
+  m <- dim(X_train)[2]
+  family <- "binomial"
+  
   
   ## AKSSAM -------------------------------------------------------------------- 
   # Train the model
@@ -156,7 +222,8 @@ fitting_function = function(X_train, X_test, y_train, y_test,
   Design_list[[1]] = matrix(1, length(y_test), 1) 
   for (t in 1:m){Design_list[[t+1]] = my.bbase4(X_test[,t], K_sel1[[t]], bdeg[t])}
   B_star <- do.call(cbind, Design_list) 
-  predictions1 <- B_star %*% alpha
+  eta1 <- B_star %*% alpha
+  prob1 <- exp(eta1)/(1 + exp(eta1))
   
   # Grid
   Grid_list = vector("list", m)
@@ -179,94 +246,94 @@ fitting_function = function(X_train, X_test, y_train, y_test,
   }
   
   # Metrics
-  MSE1 <- mean((y_test - predictions1)^2)
-  MAE1 <- mean(abs(y_test - predictions1))
+  predictions1 <- ifelse(prob1 >= 0.5, 1, 0)
+  ACC1 <- sum(y_test == predictions1) / length(y_test)
+  AUC1 <- auc(roc(as.vector(as.numeric(y_test)), as.vector(as.numeric(prob1)), quiet = TRUE))[1]
+  
   EDF1 <- Size1 <- ncol(B_star)
   
   Old_Design_list = vector("list", m + 1)
   Old_Design_list[[1]] = matrix(1, length(y_train), 1)
   for (t in 1:m){Old_Design_list[[t+1]] = my.bbase4(X_train[,t], K_sel1[[t]], bdeg[t])}
   B_star_old <- do.call(cbind, Old_Design_list)
-  residuals_train <- (y_train - B_star_old %*% alpha)
-  sigma2_hat <- mean(residuals_train^2)
-  loglik <- -0.5 * n * log(2 * pi * sigma2_hat) - 0.5 * sum(residuals_train^2) / sigma2_hat
+  eta_old1 <- B_star_old %*% alpha
+  prob_old1 <- exp(eta_old1)/(1 + exp(eta_old1))
+  
+  loglik <- sum(y_train * log(prob_old1) + (1 - y_train) * log(1 - prob_old1))
   AIC1 <- -2 * loglik + 2 * EDF1
   BIC1 <- -2 * loglik + log(n) * EDF1
   
   
-  ## PSO algorithm   -----------------------------------------------------------
-  # Train the model
-  data <- data.frame(y = y_train, as.data.frame(X_train))
-  terms <- paste0("s(V", 1:m, ", bs = 'cr', k = ", ndx + bdeg + 1, ")")             
-  formula <- as.formula(paste("y ~", paste(terms, collapse = " + ")))
-  initial_gam_model <- mgcv::gam(formula, data = data)
-  time2 <- system.time({
-    result <- suppressMessages(
-      fit_gam_pso(
-        gam_model = initial_gam_model,
-        data = data,
-        n_knots = ndx[[1]] + bdeg[[1]] + 1,
-        alpha = 1e-07,
-        smoothing_method = "GCV.Cp",
-        max_iterations = 100
-      )
-    )
-  })[3] %>% unname
-  model2 <- result$model
-  K_sel2 <- result$knots %>% unname
-  
-  # Test
-  test = as.data.frame(X_test)
-  predictions2 <- as.vector(predict(model2, newdata = test))
-    
-  # Grid
-  grid2 <- predict(model2, newdata = as.data.frame(grid), type = "terms")
-  
-  # Metrics
-  MSE2 <- mean((y_test - predictions2)^2)
-  MAE2 <- mean(abs(y_test - predictions2))
-  EDF2 <- sum(model2$edf)
-  Size2 <- length(model2$coefficients)
-  
-  residuals_train <- (y_train - predict(model2))
-  sigma2_hat <- mean(residuals_train^2)
-  loglik <- -0.5 * n * log(2 * pi * sigma2_hat) - 0.5 * sum(residuals_train^2) / sigma2_hat
-  AIC2 <- -2 * loglik + 2 * EDF2
-  BIC2 <- -2 * loglik + log(n) * EDF2
-  
-  
   ## P-splines   ---------------------------------------------------------------
   # Train the model
+  data <- data.frame(y = y_train, as.data.frame(X_train))
+  test = as.data.frame(X_test)
   terms <- paste0("s(V", 1:m, ", bs = 'ps', k = ", ndx + bdeg + 1, ")")             
   formula <- as.formula(paste("y ~", paste(terms, collapse = " + ")))
   time3 <- system.time({
-    model3 <- mgcv::gam(formula, data = data, method = "REML")
+    model3 <- mgcv::gam(formula, data = data, family = binomial(link = "logit"), method = "REML")
   })[3] %>% unname
   
   # Test
-  predictions3 <- as.vector(predict(model3, newdata = test))
+  prob3 <- as.vector(predict(model3, newdata = test , type = "response"))
     
   # Grid
   grid3 <- predict(model3, newdata = as.data.frame(grid), type = "terms")
   
   # Metrics
-  MSE3 <- mean((y_test - predictions3)^2)
-  MAE3 <- mean(abs(y_test - predictions3))
+  predictions3 <- ifelse(prob3 >= 0.5, 1, 0)
+  ACC3 <- sum(y_test == predictions3) / length(y_test)
+  AUC3 <- auc(roc(as.vector(as.numeric(y_test)), as.vector(as.numeric(prob3)), quiet = TRUE))[1]
+  
+  
   EDF3 <- sum(model3$edf)
   Size3 <- length(model3$coefficients)
   
-  residuals_train <- (y_train - predict(model3))
-  sigma2_hat <- mean(residuals_train^2)
-  loglik <- -0.5 * n * log(2 * pi * sigma2_hat) - 0.5 * sum(residuals_train^2) / sigma2_hat
+  prob_old3 <- as.vector(predict(model3, type = "response"))
+  loglik <- sum(y_train * log(prob_old3) + (1 - y_train) * log(1 - prob_old3))
   AIC3 <- -2 * loglik + 2 * EDF3
   BIC3 <- -2 * loglik + log(n) * EDF3
+  
+  ## GeDS ----------------------------------------------------------------------
+  # Train the model
+  terms_GeDS   <- paste0("f(V", 1:m, ")")
+  formula_GeDS <- as.formula(paste("y ~", paste(terms_GeDS, collapse = " + ")))
+  time4 <- system.time({
+    model4 <- GeDS::NGeDSgam(formula_GeDS, family = binomial(link = "logit"), data = data, internal_knots = ndx[[1]] - 1)
+  })[3] %>% unname
+   K_sel4 <- model4$internal_knots$cubic.int.knots %>% unname
+  
+  # Test
+  prob4 <- as.vector(predict(model4, n = 4, newdata = test , type = "response"))
+  
+  # grid
+  grid4 <- do.call(cbind, lapply(terms_GeDS, function(term) {
+    matrix(
+      predict(model4, n = 4, newdata = as.data.frame(grid), base_learner = term),
+      ncol = 1, dimnames = list(NULL, term)
+    )
+  }))
+  
+  # Metrics
+  predictions4 <- ifelse(prob4 >= 0.5, 1, 0)
+  ACC4 <- sum(y_test == predictions4) / length(y_test)
+  AUC4 <- auc(roc(as.vector(as.numeric(y_test)), as.vector(as.numeric(prob4)), quiet = TRUE))[1]
+  
+  K_len4 <- lapply(knots(model4, n = 4L, options ="all"), length) %>% unname
+  
+  EDF4 <- Size4 <- sum(sapply(knots(model4, n = 4L, options ="all"), length) %>% unname - bdeg - 1) + 1 # intercept
+  
+  prob_old4 <- as.vector(predict(model4, n = 4, type = "response"))
+  loglik4 <- sum(y_train * log(prob_old4) + (1 - y_train) * log(1 - prob_old4))
+  AIC4 <- -2 * loglik4 + 2 * EDF4
+  BIC4 <- -2 * loglik4 + log(n) * EDF4
   
   
   ## Assignment   --------------------------------------------------------------
   return(list(
     # AKSSAM algorithm results
-    AKSSAM = list(MSE = MSE1,
-                  MAE = MAE1,
+    AKSSAM = list(ACC = ACC1,
+                  AUC = AUC1,
                   Grid = grid1,
                   K_sel = K_sel1,
                   EDF = EDF1,
@@ -274,25 +341,25 @@ fitting_function = function(X_train, X_test, y_train, y_test,
                   AIC = AIC1,
                   BIC = BIC1,
                   Time = time1),
-    # PSO algorithm results
-    PSO = list(MSE = MSE2,
-               MAE = MAE2,
-               Grid = grid2,
-               K_sel = K_sel2,
-               EDF = EDF2,
-               Size = Size2,
-               AIC = AIC2,
-               BIC = BIC2,
-               Time = time2),
     # P-splines algorithm results
-    PSplines = list(MSE = MSE3,
-                    MAE = MAE3,
+    PSplines = list(ACC = ACC3,
+                    AUC = AUC3,
                     Grid = grid3,
                     EDF = EDF3,
                     Size = Size3,
                     AIC = AIC3,
                     BIC = BIC3,
-                    Time = time3)
+                    Time = time3),
+    # GeDS algorithm results
+    GeDS = list(ACC = ACC4,
+                    AUC = AUC4,
+                    Grid = grid4,
+                    K_sel = K_sel4,
+                    EDF = EDF4,
+                    Size = Size4,
+                    AIC = AIC4,
+                    BIC = BIC4,
+                    Time = time4)
               ))
 }
 ```
@@ -304,8 +371,8 @@ fitting_function = function(X_train, X_test, y_train, y_test,
 covariates_plot <- function(Results, grid, m, k){
   
   ## Miscellanea
-  methods <- c('AKSSAM', 'PSO', 'P-splines')
-  colors <- c("AKSSAM" = "#F8766D", "PSO" = "#7CAE00", "P-splines" = "#00BFC4")
+  methods <- c('AKSSAM', 'P-splines', 'GeDS')
+  colors <- c("AKSSAM" = "#F8766D", "P-splines" = "#00BFC4", 'GeDS' = '#EE9A49')
         
   
   ## Calculate the mean estimated covariates' effects over the simulations
@@ -320,27 +387,28 @@ covariates_plot <- function(Results, grid, m, k){
     }))
   })
   
-  # PSO algorithm
-  Grid_PSO_matrices <- lapply(Results, function(x) x$PSO$Grid)
-  mean_Grid_PSO <- Reduce("+", Grid_PSO_matrices) / k
-  temp <- lapply(Results, function(x) x$PSO$K_sel) 
-  K_sel_PSO <- lapply(1:m, function(i){
-    unlist(lapply(1:k, function(t){
-      v <- temp[[t]][[i]]
-      return(v[2:(length(v)-1)])
-    }))
-  })
-  
   # P-Splines
   Grid_Psp_matrices <- lapply(Results, function(x) x$PSplines$Grid)
   mean_Grid_Psp <- Reduce("+", Grid_Psp_matrices) / k
   
   
+    # GeDS algorithm
+  Grid_GeDS_matrices <- lapply(Results, function(x) x$GeDS$Grid)
+  mean_Grid_GeDS <- Reduce("+", Grid_GeDS_matrices) / k
+  mean_Grid_GeDS <- apply(mean_Grid_GeDS, 2, function(x) x - mean(x)) ## Possible misspecification
+  temp <- lapply(Results, function(x) x$GeDS$K_sel)
+  K_sel_GeDS <- lapply(1:m, function(i){
+    unlist(lapply(1:k, function(t){
+      v <- temp[[t]][[i]]
+      return(v)
+    }))
+  })
+  
   # Combined grids
   mean_grids <- list(
     "AKSSAM" = mean_Grid_AKSSAM,
-    "PSO" = mean_Grid_PSO,
-    "P-splines" = mean_Grid_Psp
+    "P-splines" = mean_Grid_Psp,
+    'GeDS' = mean_Grid_GeDS
   )
 
   
@@ -348,8 +416,8 @@ covariates_plot <- function(Results, grid, m, k){
   plot_list <- vector('list', m)
   plot_list <- lapply(1:m, function(t) {
     
-    if (t == 1){temp_title = "NumWeek - Week number"}
-    if (t == 2){temp_title = "Temp - Temperature"}
+    if (t == 1){temp_label = "mass"}
+    if (t == 2){temp_label = "age"}
     
     
     plot_df <- do.call(rbind, lapply(methods, function(method) {
@@ -360,42 +428,52 @@ covariates_plot <- function(Results, grid, m, k){
       )
     }))
     plot_df$Method <- factor(plot_df$Method,
-                         levels = c("P-splines", "PSO", "AKSSAM"))
+                         levels = c("P-splines", "AKSSAM", 'GeDS'))
 
-    rug_df_AKSSAM <- data.frame(x = K_sel_AKSSAM[[t]])
-    rug_df_PSO <- data.frame(x = K_sel_PSO[[t]])
-    
     y_range <- range(plot_df$y, na.rm = TRUE)
     y_min <- y_range[1]
     y_max <- y_range[2]
     y_base <- y_min - 0.4 * (y_max - y_min)
     dy <- (y_max - y_min) * 0.07
     
-    rug_df_AKSSAM$ymin <- y_base + dy
-    rug_df_AKSSAM$ymax <- y_base + 2*dy
-    
-    rug_df_PSO$ymin <- y_base
-    rug_df_PSO$ymax <- y_base + dy
+    rug_df_AKSSAM <- if (length(K_sel_AKSSAM[[t]]) > 0) {
+        data.frame(x = K_sel_AKSSAM[[t]], 
+                   ymin = y_base + dy, 
+                   ymax = y_base + 2*dy)
+      } else {
+        data.frame(x = numeric(0), ymin = numeric(0), ymax = numeric(0))
+      }
+      
+      rug_df_GeDS <- if (length(K_sel_GeDS[[t]]) > 0) {
+        data.frame(x = K_sel_GeDS[[t]], 
+                   ymin = y_base, 
+                   ymax = y_base + dy)
+      } else {
+        data.frame(x = numeric(0), ymin = numeric(0), ymax = numeric(0))
+      }
+  
     
     
     plot <- ggplot(plot_df, aes(x = x, y = y, color = Method)) +
       geom_line(linewidth = 1.1, alpha = 0.8, data = subset(plot_df, Method != "True effect")) +
       # 'Density' of selected knots
       geom_segment(data = rug_df_AKSSAM,
-                 aes(x = x, xend = x, y = ymin, yend = ymax),
-                 color = "#F8766D", linewidth = 2, alpha = 2/k) +
-      geom_segment(data = rug_df_PSO,
-                 aes(x = x, xend = x, y = ymin, yend = ymax),
-                 color = "#7CAE00", linewidth = 2, alpha = 2/k) +
+                   aes(x = x, xend = x, y = ymin, yend = ymax),
+                   inherit.aes = FALSE,
+                   color = "#F8766D", linewidth = 2, alpha = 2/k) +
+      geom_segment(data = rug_df_GeDS,
+                   aes(x = x, xend = x, y = ymin, yend = ymax),
+                   inherit.aes = FALSE,
+                   color = "#EE9A49", linewidth = 2, alpha = 2/k) +
       scale_color_manual(values = colors) +
       theme_minimal() +
       scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
-      labs(title = temp_title,
+      labs(x = temp_label,
+           y = expression(eta[diabetes]),
            color = 'Curve') +
       theme_light() + 
       theme(
         legend.position = "bottom",
-        axis.title = element_blank(),
         panel.grid.minor = element_blank()
       )
 
@@ -406,7 +484,6 @@ covariates_plot <- function(Results, grid, m, k){
   ## Combine the plots
   combined <- wrap_plots(plot_list, nrow = 1, guides = "collect") +
   plot_annotation(
-    title = paste0("ElectricLoad dataset, ", k, "-fold"),
     theme = theme(
       plot.title = element_text(size = 15, face = "bold"),
       legend.position = "bottom",
@@ -426,9 +503,9 @@ covariates_plot <- function(Results, grid, m, k){
 ```{r}
 error_plot <- function(Results){
   
-  methods <- c("AKSSAM", "PSO", "PSplines")
-  metrics <- c("MSE", "MAE", "EDF", "Size", "Time", "BIC")
-  metric_labels <- c("MSE", "MAE", "EDF", "Basis Size", "Time", "BIC")
+  methods <- c("AKSSAM", "PSplines", 'GeDS')
+  metrics <- c("ACC", "AUC", "EDF", "Size", "Time", "BIC")
+  metric_labels <- c("ACC", "AUC", "EDF", "Basis Size", "log10(Time)", "BIC")
   
   all_data <- list()
   for (method in methods) {
@@ -443,53 +520,34 @@ error_plot <- function(Results){
     }
   }
   df <- bind_rows(all_data)
-  df$Metric <- recode_factor(df$Metric,
-    MSE = "MSE",
-    MAE = "MAE",
-    EDF = "EDF",
-    Size = "Basis Size",
-    Time = "Time",
-    BIC = "BIC"
-  )
   df$Value <- ifelse(df$Metric == "Time", log10(df$Value), df$Value)
   df$Metric <- recode_factor(df$Metric,
-    MSE = "MSE",
-    MAE = "MAE",
+    ACC = "ACC",
+    AUC = "AUC",
     EDF = "EDF",
     Size = "Basis Size",
     Time = "log10(Time)",
     BIC = "BIC"
   )
-  metric_labels <- c("MSE", "MAE", "log10(Time)", "EDF", "Basis Size", "BIC")
   df$Metric <- factor(df$Metric, levels = metric_labels)
+  df$Metric <- factor(df$Metric, levels = c("ACC", "AUC", "log10(Time)", "EDF", "Basis Size", "BIC"))
   
-  df$Method <- recode(df$Method,
-    "PSplines" = "P-splines",
-    "ASplines" = "A-splines"
+  df$Method <- dplyr::recode(df$Method,
+    "PSplines" = "P-splines"
   )
   method_colors <- c(
     "AKSSAM"   = "#F8766D",
-    "PSO"      = "#7CAE00",
-    "P-splines" = "#00BFC4"
-  )
-  method_linetypes <- c(
-    "AKSSAM"    = "solid",
-    "PSO"       = "dashed",
-    "P-splines" = "dotted"
+    "P-splines" = "#00BFC4",
+    'GeDS' = '#EE9A49'
   )
   
   # Boxplot of all performance metrics
-  Performance_plot <- ggplot(df, aes(x = Method, y = Value, color = Method, linetype = Method)) +
+  Performance_plot <- ggplot(df, aes(x = Method, y = Value, color = Method)) +
     geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
     facet_wrap(~ Metric, scales = "free_y") +
-    scale_color_manual(values = method_colors, 
-                       name = "Algorithm",
-                       labels = c("AKSSAM", "PSO", "P-splines", "A-splines")) +
-    scale_linetype_manual(values = method_linetypes,
-                          name = "Algorithm",
-                          labels = c("AKSSAM", "PSO", "P-splines", "A-splines")) +
+    scale_color_manual(values = method_colors) +
     labs(title = "Performance Metrics",
-         x = "Method", y = "Value") +
+         x = "Method", y = "Value", color = "Algorithm") +
     theme_light(base_size = 14) +
     theme(
       legend.position = "bottom",
@@ -509,34 +567,35 @@ error_plot <- function(Results){
 ## Wrapper
 
 ```{r}
-wrapper_function = function(k, 
+wrapper = function(k, 
                             maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
                             ndx, bdeg, lambda.init){
   
   # Set seed for reproducibility
-  set.seed(13)
-  m <- 2
+  set.seed(12)
   
   # Load the dataset
-  load("Required_Scripts/electric_load.RData")
+  data("PimaIndiansDiabetes")
 
   # Select the variables of interest
-  electric_load <- electric_load %>% na.omit
-  data <- electric_load %>% dplyr::select(Load1, NumWeek, Temp)
+  PimaIndiansDiabetes <- PimaIndiansDiabetes %>% dplyr::select(mass, age, diabetes) #dplyr::select(mass, insulin, age, diabetes)
+  data <- PimaIndiansDiabetes %>% na.omit
   # Covariate matrix and response
-  X <<- data %>% dplyr::select(-Load1) %>% as.matrix %>% scale(center = TRUE, scale = TRUE) %>% unname 
+  X <<- data %>% dplyr::select(-diabetes) %>% as.matrix %>% scale(center = TRUE, scale = TRUE) %>% unname 
   attr(X, "scaled:center") <- NULL
-  y <<- data %>% dplyr::select(Load1) %>% unlist %>% scale(center = TRUE, scale = TRUE) %>%  unname
-  
+  attr(X, "scaled:scale") <- NULL
+  m <<- dim(X)[2]
+  y <<- data %>% dplyr::select(diabetes) %>% dplyr::mutate(diabetes = dplyr::if_else(diabetes == "pos", 1L, 0L)) %>% unname %>% unlist
+
   # List which contains the metrics for each simulation
   Results <- rep(list(
     list(
-      AKSSAM = list(MSE = NA, MAE = NA, Grid = NA, K_sel = vector("list", m),
+      AKSSAM = list(ACC = NA, AUC = NA, Grid = NA, K_sel = vector("list", m),
                     EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA),
-      PSO    = list(MSE = NA, MAE = NA, Grid = NA, K_sel = vector("list", m),
-                    EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA),
-      PSplines = list(MSE = NA, MAE = NA, Grid = NA,
-                      EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA)
+      PSplines = list(ACC = NA, AUC = NA, Grid = NA,
+                      EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA),
+      GeDS = list(ACC = NA, AUC = NA, Grid = NA, K_sel = vector("list", m),
+                    EDF = NA, Size = NA, AIC = NA, BIC = NA, Time = NA)
     )
   ), k)
   
@@ -552,10 +611,24 @@ wrapper_function = function(k,
     y_train <- y_test <- y
       
     # Fit the algorithms and store the results
-    result <- fitting_function(X_train, X_test, y_train, y_test,
-                                 ndx, bdeg, lambda.init,
-                                 maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
-                                 grid)
+    result <- purrr::quietly(fitting_function)(
+        X_train = X_train,
+        X_test = X_test,
+        y_train = y_train,
+        y_test = y_test,
+        ndx = ndx,
+        bdeg = bdeg,
+        lambda.init = lambda.init,
+        maxiter1 = maxiter1,
+        maxiter2 = maxiter2,
+        maxiter3 = maxiter3,
+        tol1 = tol1,
+        tol2 = tol2,
+        tol3 = tol3,
+        epsilon = epsilon,
+        grid = grid
+      )$result
+    
     Results[[1]] <- result
   } else {
     # Fit the model for each split
@@ -566,12 +639,29 @@ wrapper_function = function(k,
       y_train <- y[train_idx]
       X_test <- X[-train_idx,] %>% as.matrix
       y_test <- y[-train_idx]
-        
+      n <- length(y_train)
+      
+      current_env <- sys.frame(sys.nframe())
+      list2env(as.list(current_env), envir = globalenv())
+      
       # Fit the models
-      result <- fitting_function(X_train, X_test, y_train, y_test,
-                                   ndx, bdeg, lambda.init,
-                                   maxiter1, maxiter2, maxiter3, tol1, tol2, tol3, epsilon,
-                                   grid)
+      result <- purrr::quietly(fitting_function)(
+        X_train = X_train,
+        X_test = X_test,
+        y_train = y_train,
+        y_test = y_test,
+        ndx = ndx,
+        bdeg = bdeg,
+        lambda.init = lambda.init,
+        maxiter1 = maxiter1,
+        maxiter2 = maxiter2,
+        maxiter3 = maxiter3,
+        tol1 = tol1,
+        tol2 = tol2,
+        tol3 = tol3,
+        epsilon = epsilon,
+        grid = grid
+      )$result
   
       # Store the result, increase index and restart try_attempts
       Results[[i]] <- result
@@ -591,7 +681,7 @@ wrapper_function = function(k,
 ## Processing Function
 
 ```{r}
-process_function <- function(Results, grid, k){
+process<- function(Results, grid, k){
   
   ## Miscelanea
   m <- 2
@@ -603,8 +693,8 @@ process_function <- function(Results, grid, k){
   ## Error metrics plot and values
   err_plot <- error_plot(Results)
   
-  methods <- c("AKSSAM", "PSO", "PSplines")
-  metrics <- c("MSE", "MAE", "AIC", "BIC", "EDF", "Size", "Time")
+  methods <- c("AKSSAM", "PSplines", 'GeDS')
+  metrics <- c("ACC", "AUC", "AIC", "BIC", "EDF", "Size", "Time")
   
   err_metrics <- list()
   for (method in methods) {
@@ -630,32 +720,43 @@ process_function <- function(Results, grid, k){
 ```
 
 
+
 # GAM fit
 
-```{r GAM fit}
-ll <- wrapper_function(k = 5, 
-                       maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
-                       tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, epsilon = 1e-5,
-                       ndx = rep(40, 2), bdeg = rep(3, 2), lambda.init = rep(10, 2))
+```{r GAM fit, eval = FALSE}
+ll <- wrapper(k = 5, 
+              maxiter1 = 100, maxiter2 = 100, maxiter3 = 100, 
+              tol1 = 1e-5, tol2 = 1e-5, tol3 = 1e-5, epsilon = 1e-5,
+              ndx = rep(40, 3), bdeg = rep(3, 3), lambda.init = rep(1, 3))
 grid <- ll$grid
 Results <- ll$Results
 ```
 
-```{r GAM process, eval = FALSE}
-results <- process_function(Results = ll$Results, grid = ll$grid, k = 5)
-results$covariates_plot
-results$err_plot
+# Load Data
+
+```{r load, eval = FALSE}
+load("real_data2.RData")
 ```
+
+# Process Results
+
+```{r GAM process, eval = TRUE}
+results <- process(Results = Results, grid = grid, k = 5)
+results$err_plot
+results$covariates_plot
+```
+
+
 
 ## Summary Table
 
 ### Full Table
 
-```{r Summary Table, eval = FALSE}
+```{r Summary Table, eval = TRUE}
 
 # Define algorithms and metrics
-algos <- c("AKSSAM", "PSO", "PSplines")
-metrics <- c("MSE", "MAE", "EDF", "Size", "BIC", "Time")
+algos <- c("AKSSAM", "GeDS", "PSplines")
+metrics <- c("ACC", "AUC", "EDF", "Size", "BIC", "Time")
 
 # Initialize table with NA
 cols <- c("Fold", unlist(lapply(algos, function(a) paste(metrics, a))))
@@ -676,7 +777,7 @@ for (fold in seq_along(Results)) {
 
 # Display in HTML
 knitr::kable(results_table, format = "html",
-             caption = "Mean Results for the ElectricLoad dataset")
+             caption = "Mean Results for the PimaIndians dataset")
 
 # Export to LaTeX
 xtable::xtable(results_table, digits = 6)
@@ -685,9 +786,8 @@ xtable::xtable(results_table, digits = 6)
 
 # Save the RData
 
-```{r Save the data}
-# Checkpoint
-save.image(file = "real_data2.RData")
+```{r Checkpoint, eval = FALSE}
+# save.image(file = "real_data2.RData")
 ```
 
 
