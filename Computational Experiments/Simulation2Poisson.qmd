@@ -461,12 +461,11 @@ covariates_plot <- function(Results, grid, N, m, n){
       scale_color_manual(values = colors) +
       theme_minimal() +
       scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
-      labs(title = paste0('Covariate ', t),
+      labs(x = bquote(x), y = bquote(S[.(t)](x)),
            color = 'Curve') +
       theme_light() + 
       theme(
         legend.position = "bottom",
-        axis.title = element_blank(),
         panel.grid.minor = element_blank()
       )
 
@@ -477,7 +476,6 @@ covariates_plot <- function(Results, grid, N, m, n){
   ## Combine the plots
   combined <- wrap_plots(plot_list, nrow = 1, guides = "collect") +
   plot_annotation(
-    title = paste0("Poisson Simulation, n = ", n),
     theme = theme(
       plot.title = element_text(size = 15, face = "bold"),
       legend.position = "bottom",
@@ -499,7 +497,7 @@ error_plot <- function(Results){
   
   methods <- c("AKSSAM", "PSplines", "GeDS")
   metrics <- c("MSE", "MAE", "EDF", "Size", "Time", "BIC")
-  metric_labels <- c("MSE", "MAE", "EDF", "Basis Size", "Time", "BIC")
+  metric_labels <- c("MSE", "MAE", "EDF", "Basis Size", "log10(Time)", "BIC")
   
   all_data <- list()
   for (method in methods) {
@@ -514,16 +512,17 @@ error_plot <- function(Results){
     }
   }
   df <- bind_rows(all_data)
+ df$Value <- ifelse(df$Metric == "Time", log10(df$Value), df$Value)
   df$Metric <- recode_factor(df$Metric,
     MSE = "MSE",
     MAE = "MAE",
     EDF = "EDF",
     Size = "Basis Size",
-    Time = "Time",
+    Time = "log10(Time)",
     BIC = "BIC"
   )
   df$Metric <- factor(df$Metric, levels = metric_labels)
-  df$Metric <- factor(df$Metric, levels = c("MSE", "MAE", "Time", "EDF", "Basis Size", "BIC"))
+  df$Metric <- factor(df$Metric, levels = c("MSE", "MAE", "log10(Time)", "EDF", "Basis Size", "BIC"))
   
   df$Method <- recode(df$Method,
     "PSplines" = "P-splines"
@@ -539,7 +538,7 @@ error_plot <- function(Results){
     geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
     facet_wrap(~ Metric, scales = "free_y") +
     scale_color_manual(values = method_colors) +
-    labs(title = "Performance Metrics",
+    labs(
          x = "Method", y = "Value", color = "Algorithm") +
     theme_light(base_size = 14) +
     theme(

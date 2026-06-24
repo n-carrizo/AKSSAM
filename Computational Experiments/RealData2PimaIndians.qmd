@@ -536,9 +536,9 @@ error_plot <- function(Results){
     "PSplines" = "P-splines"
   )
   method_colors <- c(
-    "AKSSAM"   = "#F8766D",
+    "AKSSAM"    = "#F8766D",
     "P-splines" = "#00BFC4",
-    'GeDS' = '#EE9A49'
+    'GeDS'      = '#EE9A49'
   )
   
   # Boxplot of all performance metrics
@@ -546,8 +546,7 @@ error_plot <- function(Results){
     geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
     facet_wrap(~ Metric, scales = "free_y") +
     scale_color_manual(values = method_colors) +
-    labs(title = "Performance Metrics",
-         x = "Method", y = "Value", color = "Algorithm") +
+    labs(x = "Method", y = "Value", color = "Algorithm") +
     theme_light(base_size = 14) +
     theme(
       legend.position = "bottom",

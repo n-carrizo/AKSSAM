@@ -590,20 +590,19 @@ error_plot <- function(Results){
   df$Metric <- factor(df$Metric, levels = metric_labels)
   
   df$Method <- recode(df$Method,
-    "PSplines" = "P-splines",
-    "ASplines" = "A-splines"
+    "PSplines" = "P-splines"
   )
   method_colors <- c(
-    "AKSSAM"   = "#F8766D",
-    "PSO"      = "#7CAE00",
+    "AKSSAM"    = "#F8766D",
+    "PSO"       = "#7CAE00",
     "P-splines" = "#00BFC4",
-    "GeDS" = '#EE9A49'
+    "GeDS"      = '#EE9A49'
   )
   method_linetypes <- c(
     "AKSSAM"    = "solid",
     "PSO"       = "solid",
     "P-splines" = "solid",
-    "GeDS" = "solid"
+    "GeDS"      = "solid"
   )
   
   # Boxplot of all performance metrics
@@ -611,13 +610,10 @@ error_plot <- function(Results){
     geom_boxplot(position = position_dodge(0.75), width = 0.6, fill = NA) +
     facet_wrap(~ Metric, scales = "free_y") +
     scale_color_manual(values = method_colors, 
-                       name = "Algorithm",
-                       labels = c("AKSSAM", "PSO", "P-splines", "GeDS")) +
+                       name = "Algorithm") +
     scale_linetype_manual(values = method_linetypes,
-                          name = "Algorithm",
-                          labels = c("AKSSAM", "PSO", "P-splines", "GeDS")) +
-    labs(title = "Performance Metrics",
-         x = "Method", y = "Value") +
+                          name = "Algorithm") +
+    labs(x = "Method", y = "Value") +
     theme_light(base_size = 14) +
     theme(
       legend.position = "bottom",
